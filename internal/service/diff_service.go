@@ -57,12 +57,12 @@ func (s *DiffService) DiffVersions(ctx context.Context, appID, env string, v1, v
 
 	ver1, err := s.store.GetVersion(ctx, appID, env, v1)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get version %d: %w", v1, err)
+		return nil, err
 	}
 
 	ver2, err := s.store.GetVersion(ctx, appID, env, v2)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get version %d: %w", v2, err)
+		return nil, err
 	}
 
 	changes := diff.Diff(ver1.ConfigData, ver2.ConfigData)
@@ -87,16 +87,14 @@ func (s *DiffService) DiffCurrentVersion(ctx context.Context, appID, env string,
 		return nil, err
 	}
 
-	// Get historical version
 	historical, err := s.store.GetVersion(ctx, appID, env, historicalVersion)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get historical version %d: %w", historicalVersion, err)
+		return nil, err
 	}
 
-	// Get current config
 	currentConfig, err := s.store.GetConfigMap(ctx, appID, env)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current config: %w", err)
+		return nil, err
 	}
 
 	changes := diff.Diff(historical.ConfigData, currentConfig)
@@ -123,7 +121,7 @@ func (s *DiffService) DiffCurrentWithConfig(ctx context.Context, appID, env stri
 
 	currentConfig, err := s.store.GetConfigMap(ctx, appID, env)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current config: %w", err)
+		return nil, err
 	}
 
 	changes := diff.Diff(currentConfig, newConfig)

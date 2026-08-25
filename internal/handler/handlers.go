@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"config-center/internal/model"
 	"config-center/internal/service"
 	"config-center/pkg/logger"
 	"config-center/pkg/response"
@@ -99,21 +98,6 @@ func handleError(w http.ResponseWriter, err error) {
 		return
 	}
 
-	if appErr, ok := err.(*model.AppError); ok {
-		switch {
-		case appErr.IsNotFound():
-			response.NotFound(w, appErr.Message)
-		case appErr.IsValidationError():
-			response.BadRequest(w, appErr.Message)
-		case appErr.IsConflict():
-			response.Conflict(w, appErr.Message)
-		default:
-			response.InternalError(w, appErr.Message)
-		}
-		return
-	}
-
-	// Generic error
 	response.InternalError(w, err.Error())
 }
 

@@ -59,7 +59,6 @@ type RollbackResult struct {
 // Rollback restores configuration to a specific historical version.
 // It creates a new version snapshot rather than modifying existing ones.
 func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targetVersion int, user, ipAddress string) (*RollbackResult, error) {
-	// Validate app and environment
 	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {
 		return nil, err
 	}
@@ -67,19 +66,16 @@ func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targe
 		return nil, err
 	}
 
-	// Get the target version
 	target, err := s.store.GetVersion(ctx, appID, env, targetVersion)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get target version %d: %w", targetVersion, err)
+		return nil, err
 	}
 
-	// Get current version for diff calculation
 	currentVersion, err := s.store.GetLatestVersionNumber(ctx, appID, env)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current version: %w", err)
+		return nil, err
 	}
 
-	// Calculate diff between current and target
 	var changes []diff.Change
 	if currentVersion > 0 && currentVersion != targetVersion {
 		current, err := s.store.GetVersion(ctx, appID, env, currentVersion)
@@ -88,8 +84,6 @@ func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targe
 		}
 	}
 
-	// Restore configuration to target version
-	// Build config items from the target version's config data
 	configItems := make([]*model.ConfigItem, 0, len(target.ConfigData))
 	now := time.Now()
 	for key, value := range target.ConfigData {
@@ -109,20 +103,17 @@ func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targe
 		})
 	}
 
-	// Replace config map
 	if err := s.store.ReplaceConfigMap(ctx, appID, env, configItems); err != nil {
 		s.logger.Errorf("failed to restore config for %s/%s: %v", appID, env, err)
-		return nil, fmt.Errorf("failed to restore config: %w", err)
+		return nil, err
 	}
 
-	// Create a new version snapshot
 	summary := fmt.Sprintf("rollback to version %d", targetVersion)
 	newVer, err := s.versionSvc.CreateVersion(ctx, appID, env, user, summary)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create rollback version: %w", err)
+		return nil, err
 	}
 
-	// Log the rollback
 	if err := s.auditSvc.LogRollback(ctx, appID, env, currentVersion, targetVersion, user, ipAddress); err != nil {
 		s.logger.Warnf("failed to log rollback: %v", err)
 	}
@@ -186,12 +177,10 @@ func (s *RollbackService) CanRollback(ctx context.Context, appID, env string, ta
 		return false, err
 	}
 
-	// Check target version exists
 	if _, err := s.store.GetVersion(ctx, appID, env, targetVersion); err != nil {
-		return false, nil
+		return false, err
 	}
 
-	// Check it's not the same as current
 	current, err := s.store.GetLatestVersionNumber(ctx, appID, env)
 	if err != nil {
 		return false, err

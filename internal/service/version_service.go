@@ -136,12 +136,12 @@ func (s *VersionService) ListVersions(ctx context.Context, appID, env string, pa
 func (s *VersionService) CompareVersions(ctx context.Context, appID, env string, v1, v2 int) ([]diff.Change, error) {
 	ver1, err := s.store.GetVersion(ctx, appID, env, v1)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get version %d: %w", v1, err)
+		return nil, err
 	}
 
 	ver2, err := s.store.GetVersion(ctx, appID, env, v2)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get version %d: %w", v2, err)
+		return nil, err
 	}
 
 	return diff.Diff(ver1.ConfigData, ver2.ConfigData), nil
