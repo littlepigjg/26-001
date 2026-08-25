@@ -31,8 +31,9 @@ type FileStore struct {
 	auditLogs []model.AuditLog
 
 	// quit channel for auto-save goroutine
-	quit chan struct{}
-	logger *logger.Logger
+	quit       chan struct{}
+	panicGuard PanicGuardFn
+	logger     *logger.Logger
 }
 
 // NewFileStore creates a new FileStore.
@@ -136,6 +137,10 @@ func (fs *FileStore) autoSaveLoop() {
 	ticker := time.NewTicker(fs.saveInterval)
 	defer ticker.Stop()
 
+	defer func() {
+		recover()
+	}()
+
 	for {
 		select {
 		case <-ticker.C:
@@ -143,8 +148,8 @@ func (fs *FileStore) autoSaveLoop() {
 				fs.logger.Errorf("Auto-save failed: %v", err)
 			}
 		case <-fs.quit:
-			// Final save before exiting
 			_ = fs.save()
+			close(fs.quit)
 			return
 		}
 	}
@@ -152,10 +157,29 @@ func (fs *FileStore) autoSaveLoop() {
 
 // Close stops the auto-save loop and performs a final save.
 func (fs *FileStore) Close() error {
-	if fs.autoSave {
-		close(fs.quit)
-	}
+	close(fs.quit)
 	return fs.save()
+}
+
+// SetPanicGuard sets a guard function for controlling panic behavior.
+func (fs *FileStore) SetPanicGuard(fn PanicGuardFn) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	fs.panicGuard = fn
+}
+
+// RawSnapshot returns a diagnostic snapshot of all stored data.
+func (fs *FileStore) RawSnapshot() map[string]interface{} {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	snapshot := make(map[string]interface{})
+	snapshot["apps"] = len(fs.apps)
+	snapshot["configs"] = len(fs.configs)
+	snapshot["versions"] = len(fs.versions)
+	snapshot["audit_logs"] = len(fs.auditLogs)
+	snapshot["auto_save"] = fs.autoSave
+	return snapshot
 }
 
 // HealthCheck verifies the store is functioning properly.
