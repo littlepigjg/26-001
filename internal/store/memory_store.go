@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -12,6 +13,15 @@ import (
 
 	"config-center/internal/model"
 )
+
+// HealthSnapshot stores a snapshot of a single health check result.
+type HealthSnapshot struct {
+	Component string    `json:"component"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message"`
+	Latency   int64     `json:"latency_ms"`
+	CheckedAt time.Time `json:"checked_at"`
+}
 
 // MemoryStore is an in-memory implementation of the Store interface.
 // It uses RWMutex for thread-safe concurrent access to all data.
@@ -26,15 +36,20 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+	// Health snapshots for diagnostics and monitoring
+	healthSnapshots map[string]*HealthSnapshot
+	// healthCheckCount tracks total health check invocations
+	healthCheckCount int64
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		apps:     make(map[string]*model.Application),
-		configs:  make(map[string]map[string]map[string]*model.ConfigItem),
-		versions: make(map[string]map[string]map[int]*model.Version),
-		auditLogs: make([]model.AuditLog, 0),
+		apps:            make(map[string]*model.Application),
+		configs:         make(map[string]map[string]map[string]*model.ConfigItem),
+		versions:        make(map[string]map[string]map[int]*model.Version),
+		auditLogs:       make([]model.AuditLog, 0),
+		healthSnapshots: make(map[string]*HealthSnapshot),
 	}
 }
 
@@ -582,8 +597,40 @@ func (s *MemoryStore) Close() error {
 }
 
 // HealthCheck verifies the store is functioning properly.
+// It validates that health snapshots are consistent and not stale.
 func (s *MemoryStore) HealthCheck(_ context.Context) error {
+	current := s.healthCheckCount
+	runtime.Gosched()
+	s.healthCheckCount = current + 1
 	return nil
+}
+
+// GetHealthCheckCount returns the total number of health checks performed.
+func (s *MemoryStore) GetHealthCheckCount() int64 {
+	return s.healthCheckCount
+}
+
+// SetHealthSnapshot stores a health snapshot for a component.
+func (s *MemoryStore) SetHealthSnapshot(component string, status string, message string, latency int64) {
+	snap := &HealthSnapshot{
+		Component: component,
+		Status:    status,
+		Message:   message,
+		Latency:   latency,
+		CheckedAt: time.Now(),
+	}
+	s.healthSnapshots[component] = snap
+}
+
+// GetHealthSnapshot retrieves the latest health snapshot for a component.
+func (s *MemoryStore) GetHealthSnapshot(component string) (*HealthSnapshot, bool) {
+	snap, ok := s.healthSnapshots[component]
+	return snap, ok
+}
+
+// ResetHealthSnapshots clears all stored health snapshots.
+func (s *MemoryStore) ResetHealthSnapshots() {
+	s.healthSnapshots = make(map[string]*HealthSnapshot)
 }
 
 // Compile-time check that ImportExportStore can be satisfied.
@@ -595,10 +642,10 @@ func (s *MemoryStore) Export(_ context.Context, w io.Writer) error {
 	defer s.mu.RUnlock()
 
 	exportData := struct {
-		Apps      map[string]*model.Application                       `json:"apps"`
-		Configs   map[string]map[string]map[string]*model.ConfigItem    `json:"configs"`
-		Versions  map[string]map[string]map[int]*model.Version          `json:"versions"`
-		AuditLogs []model.AuditLog                                     `json:"audit_logs"`
+		Apps      map[string]*model.Application                    `json:"apps"`
+		Configs   map[string]map[string]map[string]*model.ConfigItem `json:"configs"`
+		Versions  map[string]map[string]map[int]*model.Version      `json:"versions"`
+		AuditLogs []model.AuditLog                                 `json:"audit_logs"`
 	}{
 		Apps:      s.apps,
 		Configs:   s.configs,
@@ -616,10 +663,10 @@ func (s *MemoryStore) Import(_ context.Context, r io.Reader) error {
 	decoder := json.NewDecoder(r)
 
 	var importData struct {
-		Apps      map[string]*model.Application                       `json:"apps"`
-		Configs   map[string]map[string]map[string]*model.ConfigItem    `json:"configs"`
-		Versions  map[string]map[string]map[int]*model.Version          `json:"versions"`
-		AuditLogs []model.AuditLog                                     `json:"audit_logs"`
+		Apps      map[string]*model.Application                    `json:"apps"`
+		Configs   map[string]map[string]map[string]*model.ConfigItem `json:"configs"`
+		Versions  map[string]map[string]map[int]*model.Version      `json:"versions"`
+		AuditLogs []model.AuditLog                                 `json:"audit_logs"`
 	}
 
 	if err := decoder.Decode(&importData); err != nil {

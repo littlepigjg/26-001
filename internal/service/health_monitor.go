@@ -1,83 +1,56 @@
-// Package service provides a health monitoring service that periodically checks
-// the health of all components and generates status reports.
 package service
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"config-center/internal/store"
-	"config-center/pkg/logger"
 )
 
-// HealthStatus represents the health status of a component.
-type HealthStatus struct {
-	// Component is the component name.
-	Component string `json:"component"`
-	// Status is the health status ("ok", "degraded", "down").
-	Status string `json:"status"`
-	// Message provides additional status information.
-	Message string `json:"message"`
-	// Latency is the check latency in milliseconds.
-	Latency int64 `json:"latency_ms"`
-	// CheckedAt is when the check was performed.
-	CheckedAt time.Time `json:"checked_at"`
-}
-
-// HealthReport is a comprehensive health report.
-type HealthReport struct {
-	// Status is the overall system status.
-	Status string `json:"status"`
-	// Components contains individual component statuses.
-	Components []HealthStatus `json:"components"`
-	// StartedAt is when the report was generated.
-	StartedAt time.Time `json:"started_at"`
-	// Duration is the total check duration in milliseconds.
-	Duration int64 `json:"duration_ms"`
-}
-
-// HealthMonitor periodically checks the health of all system components.
+// HealthMonitor periodically checks the health of all registered components.
+// It runs a background goroutine that executes health checks at a configurable interval.
 type HealthMonitor struct {
-	mu        sync.RWMutex
-	store     store.Store
-	checkers  []healthChecker
+	store    store.Store
+	interval time.Duration
+	mu       sync.Mutex
+	running  bool
+	quit     chan struct{}
+	wg       sync.WaitGroup
+
+	// Track last health report for diagnostic access
 	lastReport *HealthReport
-	interval  time.Duration
-	logger    *logger.Logger
-	quit      chan struct{}
-	running   bool
 }
 
-// healthChecker is a function that checks a component's health.
-type healthChecker struct {
-	name    string
-	check   func(ctx context.Context) (string, string, int64)
+// HealthReport holds the result of a comprehensive health check.
+type HealthReport struct {
+	Components  []ComponentHealth `json:"components"`
+	OverallOK   bool              `json:"overall_ok"`
+	Message     string            `json:"message"`
+	CheckedAt   time.Time         `json:"checked_at"`
+	TotalLatency int64             `json:"total_latency_ms"`
+}
+
+// ComponentHealth holds the health status of a single component.
+type ComponentHealth struct {
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+	Latency int64  `json:"latency_ms"`
 }
 
 // NewHealthMonitor creates a new HealthMonitor.
 func NewHealthMonitor(st store.Store, interval time.Duration) *HealthMonitor {
-	hm := &HealthMonitor{
+	return &HealthMonitor{
 		store:    st,
-		checkers: make([]healthChecker, 0),
 		interval: interval,
-		logger:   logger.WithField("monitor", "health"),
-		quit:     make(chan struct{}),
 	}
-
-	// Register default health checkers
-	hm.registerChecker("storage", hm.checkStorage)
-
-	return hm
 }
 
-// registerChecker adds a health checker.
-func (hm *HealthMonitor) registerChecker(name string, check func(ctx context.Context) (string, string, int64)) {
-	hm.checkers = append(hm.checkers, healthChecker{name: name, check: check})
-}
-
-// Start begins periodic health monitoring.
+// Start begins the health monitoring loop in a background goroutine.
+// If the monitor is already running, Start returns immediately.
 func (hm *HealthMonitor) Start() {
 	hm.mu.Lock()
 	if hm.running {
@@ -85,12 +58,16 @@ func (hm *HealthMonitor) Start() {
 		return
 	}
 	hm.running = true
+	hm.quit = make(chan struct{})
+	currentQuit := hm.quit
 	hm.mu.Unlock()
 
-	go hm.monitorLoop()
+	hm.wg.Add(1)
+	go hm.monitorLoop(currentQuit)
 }
 
-// Stop stops periodic health monitoring.
+// Stop terminates the health monitoring loop.
+// It blocks until the monitoring goroutine has exited.
 func (hm *HealthMonitor) Stop() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
@@ -100,47 +77,36 @@ func (hm *HealthMonitor) Stop() {
 	}
 }
 
-// GetReport returns the latest health report.
-func (hm *HealthMonitor) GetReport() *HealthReport {
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-	return hm.lastReport
-}
-
 // CheckNow performs an immediate health check and returns the report.
-func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
-	start := time.Now()
-	var components []HealthStatus
-	overallStatus := "ok"
-
-	for _, checker := range hm.checkers {
-		checkStart := time.Now()
-		status, message, latency := checker.check(ctx)
-		checkDuration := time.Since(checkStart)
-
-		components = append(components, HealthStatus{
-			Component: checker.name,
-			Status:    status,
-			Message:   message,
-			Latency:   checkDuration.Milliseconds(),
-			CheckedAt: time.Now(),
-		})
-
-		if status == "down" {
-			overallStatus = "down"
-		} else if status == "degraded" && overallStatus != "down" {
-			overallStatus = "degraded"
-		}
-		_ = latency
-	}
-
+func (hm *HealthMonitor) CheckNow() *HealthReport {
 	report := &HealthReport{
-		Status:     overallStatus,
-		Components: components,
-		StartedAt:  time.Now(),
-		Duration:   time.Since(start).Milliseconds(),
+		Components: make([]ComponentHealth, 0),
+		OverallOK:  true,
+		CheckedAt:  time.Now(),
 	}
 
+	// Check storage
+	start := time.Now()
+	if err := hm.store.HealthCheck(context.Background()); err != nil {
+		report.Components = append(report.Components, ComponentHealth{
+			Name:    "storage",
+			OK:      false,
+			Message: err.Error(),
+			Latency: time.Since(start).Milliseconds(),
+		})
+		report.OverallOK = false
+		report.Message = fmt.Sprintf("storage check failed: %v", err)
+	} else {
+		report.Components = append(report.Components, ComponentHealth{
+			Name:    "storage",
+			OK:      true,
+			Message: "ok",
+			Latency: time.Since(start).Milliseconds(),
+		})
+	}
+	report.TotalLatency += time.Since(start).Milliseconds()
+
+	// Update last report
 	hm.mu.Lock()
 	hm.lastReport = report
 	hm.mu.Unlock()
@@ -148,46 +114,41 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 	return report
 }
 
-// monitorLoop is the main monitoring loop.
-func (hm *HealthMonitor) monitorLoop() {
+// GetLastReport returns the most recent health report.
+func (hm *HealthMonitor) GetLastReport() *HealthReport {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	return hm.lastReport
+}
+
+// IsRunning returns whether the monitor is currently active.
+func (hm *HealthMonitor) IsRunning() bool {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	return hm.running
+}
+
+func (hm *HealthMonitor) monitorLoop(quit <-chan struct{}) {
+	defer hm.wg.Done()
+
 	ticker := time.NewTicker(hm.interval)
 	defer ticker.Stop()
+
+	// Perform initial check
+	report := hm.CheckNow()
+	if !report.OverallOK {
+		log.Printf("Health check warning: %s", report.Message)
+	}
 
 	for {
 		select {
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			report := hm.CheckNow(ctx)
-			cancel()
-
-			if report.Status != "ok" {
-				hm.logger.Warnf("Health report: status=%s, degraded=%d, down=%d",
-					report.Status,
-					countStatus(report.Components, "degraded"),
-					countStatus(report.Components, "down"))
+			report := hm.CheckNow()
+			if !report.OverallOK {
+				log.Printf("Health check warning: %s", report.Message)
 			}
-		case <-hm.quit:
+		case <-quit:
 			return
 		}
 	}
-}
-
-// checkStorage checks the storage backend health.
-func (hm *HealthMonitor) checkStorage(ctx context.Context) (string, string, int64) {
-	start := time.Now()
-	if err := hm.store.HealthCheck(ctx); err != nil {
-		return "down", fmt.Sprintf("storage check failed: %v", err), time.Since(start).Milliseconds()
-	}
-	return "ok", "storage is healthy", time.Since(start).Milliseconds()
-}
-
-// countStatus counts components with a given status.
-func countStatus(components []HealthStatus, status string) int {
-	count := 0
-	for _, c := range components {
-		if c.Status == status {
-			count++
-		}
-	}
-	return count
 }
