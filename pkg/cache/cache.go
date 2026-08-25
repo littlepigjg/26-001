@@ -4,6 +4,7 @@ package cache
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +39,8 @@ type Cache struct {
 	quit chan struct{}
 	// closed flag
 	closed bool
+	// activeCleanup tracks number of active cleanup goroutines
+	activeCleanup int32
 }
 
 // New creates a new Cache with the given default TTL and max size.
@@ -64,20 +67,29 @@ func (c *Cache) StartCleanup(interval time.Duration) {
 		c.mu.Unlock()
 		return
 	}
+	c.quit = make(chan struct{})
+	currentQuit := c.quit
 	c.mu.Unlock()
 
+	atomic.AddInt32(&c.activeCleanup, 1)
 	go func() {
+		defer atomic.AddInt32(&c.activeCleanup, -1)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				c.cleanup()
-			case <-c.quit:
+			case <-currentQuit:
 				return
 			}
 		}
 	}()
+}
+
+// ActiveGoroutines returns the number of active cleanup goroutines.
+func (c *Cache) ActiveGoroutines() int32 {
+	return atomic.LoadInt32(&c.activeCleanup)
 }
 
 // Stop stops the background cleanup goroutine and clears the cache.
@@ -88,6 +100,23 @@ func (c *Cache) Stop() {
 		c.closed = true
 		close(c.quit)
 		c.clearLocked()
+	}
+}
+
+// StopAndWait stops all background cleanup goroutines and waits for them to finish.
+func (c *Cache) StopAndWait() {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	close(c.quit)
+	c.clearLocked()
+	c.mu.Unlock()
+
+	for i := 0; i < 100 && atomic.LoadInt32(&c.activeCleanup) > 0; i++ {
+		time.Sleep(time.Millisecond * 5)
 	}
 }
 

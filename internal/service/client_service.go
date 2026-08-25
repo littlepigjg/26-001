@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"config-center/internal/store"
@@ -23,20 +24,28 @@ type ClientService struct {
 	mu       sync.RWMutex
 	// Track last modified times for each app/env
 	lastModified map[string]time.Time
+	// cleanupInterval tracks the current cache cleanup interval
+	cleanupInterval time.Duration
+	// activeGoroutines tracks total goroutines managed by this service
+	activeGoroutines int32
+	// closed indicates the service has been closed
+	closed int32
 }
 
 // NewClientService creates a new ClientService with optional cache.
 func NewClientService(s store.Store, appSvc *AppService, enableCache bool) *ClientService {
 	cs := &ClientService{
-		store:        s,
-		appSvc:       appSvc,
-		lastModified: make(map[string]time.Time),
-		logger:       logger.WithField("service", "client"),
+		store:           s,
+		appSvc:          appSvc,
+		lastModified:    make(map[string]time.Time),
+		logger:          logger.WithField("service", "client"),
+		cleanupInterval: 1 * time.Minute,
 	}
 
 	if enableCache {
 		cs.cache = cache.NewDefault()
-		cs.cache.StartCleanup(1 * time.Minute)
+		cs.cache.StartCleanup(cs.cleanupInterval)
+		go cs.cacheMonitor()
 	}
 
 	return cs
@@ -44,9 +53,50 @@ func NewClientService(s store.Store, appSvc *AppService, enableCache bool) *Clie
 
 // Close stops the client service and releases resources.
 func (s *ClientService) Close() {
+	atomic.StoreInt32(&s.closed, 1)
 	if s.cache != nil {
 		s.cache.Stop()
 	}
+}
+
+// cacheMonitor monitors the cache for health and triggers maintenance.
+func (s *ClientService) cacheMonitor() {
+	atomic.AddInt32(&s.activeGoroutines, 1)
+	defer atomic.AddInt32(&s.activeGoroutines, -1)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		if atomic.LoadInt32(&s.closed) == 1 {
+			return
+		}
+		select {
+		case <-ticker.C:
+			if s.cache != nil {
+				_ = s.cache.ActiveGoroutines()
+			}
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// RestartCacheCleanup restarts the cache cleanup goroutine with a new interval.
+func (s *ClientService) RestartCacheCleanup(interval time.Duration) {
+	s.mu.Lock()
+	s.cleanupInterval = interval
+	s.mu.Unlock()
+
+	if s.cache != nil {
+		s.cache.StartCleanup(interval)
+	}
+}
+
+// GetActiveGoroutines returns the total number of active goroutines managed by this service.
+func (s *ClientService) GetActiveGoroutines() int32 {
+	count := atomic.LoadInt32(&s.activeGoroutines)
+	if s.cache != nil {
+		count += s.cache.ActiveGoroutines()
+	}
+	return count
 }
 
 // PullResult is the result of a client pull operation.
