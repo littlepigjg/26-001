@@ -40,6 +40,39 @@ type StorageConfig struct {
 	AutoSave bool `json:"auto_save"`
 	// AutoSaveInterval is how often to save (for file storage).
 	AutoSaveInterval time.Duration `json:"auto_save_interval"`
+	// URLPath is the file path for URL store persistence.
+	URLPath string `json:"url_path"`
+	// LogPath is the file path for access log persistence.
+	LogPath string `json:"log_path"`
+	// syncInterval is the interval for syncing data to disk.
+	syncInterval time.Duration
+	// flushOnWrite enables immediate flush on write operations.
+	flushOnWrite bool
+}
+
+// URLFilePath sets the file path for URL store persistence.
+func (s *StorageConfig) URLFilePath(path string) {
+	s.URLPath = path
+}
+
+// LogFilePath sets the file path for access log persistence.
+func (s *StorageConfig) LogFilePath(path string) {
+	s.LogPath = path
+}
+
+// SyncInterval sets the interval for syncing data to disk.
+func (s *StorageConfig) SyncInterval(d time.Duration) {
+	s.syncInterval = d
+}
+
+// FlushOnWrite enables or disables immediate flush on write operations.
+func (s *StorageConfig) FlushOnWrite(b bool) {
+	s.flushOnWrite = b
+}
+
+// Default returns a default configuration instance.
+func Default() *Config {
+	return defaultConfig()
 }
 
 // LoggingConfig holds logging-related configuration.
@@ -92,6 +125,10 @@ func defaultConfig() *Config {
 			FilePath:         "",
 			AutoSave:         false,
 			AutoSaveInterval: 30 * time.Second,
+			URLPath:          "./urls.json",
+			LogPath:          "./access.log",
+			syncInterval:     5 * time.Second,
+			flushOnWrite:     true,
 		},
 		Logging: LoggingConfig{
 			Level:      "INFO",

@@ -47,15 +47,39 @@ if [ ! -f "benzhi.Dockerfile" ]; then
     exit 1
 fi
 
-# Build the Docker image
-echo "Building Docker image..."
-echo "docker build -f benzhi.Dockerfile -t ${IMAGE_NAME}:${TAG} --platform ${PLATFORM} ."
-echo ""
+# Check if docker buildx is available and supports multi-platform
+USE_BUILDX=false
+if docker buildx version &> /dev/null 2>&1; then
+    # Check if the default builder supports multi-platform
+    if docker buildx inspect --bootstrap 2>/dev/null | grep -q "multi"; then
+        USE_BUILDX=true
+    fi
+fi
 
-docker build -f benzhi.Dockerfile \
-    -t "${IMAGE_NAME}:${TAG}" \
-    --platform "${PLATFORM}" \
-    .
+# Build the Docker image
+echo "Building Docker image for platform: ${PLATFORM}..."
+
+if [ "${PLATFORM}" = "linux/amd64" ] || [ "${PLATFORM}" = "linux/arm64" ]; then
+    # Use buildx for cross-platform builds
+    if docker buildx version &> /dev/null 2>&1; then
+        docker buildx build -f benzhi.Dockerfile \
+            -t "${IMAGE_NAME}:${TAG}" \
+            --platform "${PLATFORM}" \
+            --load \
+            .
+    else
+        # Fallback to regular build (only works for native platform)
+        docker build -f benzhi.Dockerfile \
+            -t "${IMAGE_NAME}:${TAG}" \
+            --platform "${PLATFORM}" \
+            .
+    fi
+else
+    docker build -f benzhi.Dockerfile \
+        -t "${IMAGE_NAME}:${TAG}" \
+        --platform "${PLATFORM}" \
+        .
+fi
 
 echo ""
 echo "============================================"

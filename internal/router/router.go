@@ -52,6 +52,20 @@ func (r *Router) Handler() http.Handler {
 	return h
 }
 
+// SetDefectHandler sets the defect handler on the router's handlers.
+func (r *Router) SetDefectHandler(dh *handler.DefectHandler) {
+	h := handler.NewHandlers(
+		nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	h.SetDefectHandler(dh)
+
+	// Register defect verification routes
+	r.mux.HandleFunc("/api/defect/context-cancel", r.wrapHandler(h.VerifyContextCancel))
+	r.mux.HandleFunc("/api/defect/context-timeout", r.wrapHandler(h.VerifyContextTimeout))
+	r.mux.HandleFunc("/api/defect/create-timeout", r.wrapHandler(h.VerifyCreateWithTimeout))
+	r.mux.HandleFunc("/api/defect/basic", r.wrapHandler(h.VerifyBasicFunctionality))
+}
+
 // RegisterRoutes registers all API routes on the underlying mux.
 func (r *Router) RegisterRoutes() {
 	h := handler.NewHandlers(
@@ -68,6 +82,9 @@ func (r *Router) RegisterRoutes() {
 	// Health check endpoints
 	r.mux.HandleFunc("/health", r.wrapHandler(h.Health))
 	r.mux.HandleFunc("/ready", r.wrapHandler(h.Ready))
+
+	// Defect verification endpoints are registered later via SetDefectHandler
+	// to allow lazy initialization of the defect handler.
 
 	// API routes - use /api prefix
 	r.mux.HandleFunc("/api/apps", r.wrapHandler(h.ListApps))       // GET=list, POST=create

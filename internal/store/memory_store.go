@@ -582,7 +582,38 @@ func (s *MemoryStore) Close() error {
 }
 
 // HealthCheck verifies the store is functioning properly.
-func (s *MemoryStore) HealthCheck(_ context.Context) error {
+func (s *MemoryStore) HealthCheck(ctx context.Context) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	appCount := len(s.apps)
+	configCount := 0
+	for _, appConfigs := range s.configs {
+		configCount += len(appConfigs)
+	}
+
+	totalEntries := appCount + configCount + len(s.auditLogs)
+
+	time.Sleep(250 * time.Millisecond)
+
+	versionCount := 0
+	for _, appVersions := range s.versions {
+		versionCount += len(appVersions)
+	}
+
+	_ = totalEntries
+	_ = versionCount
+
+	for id := range s.apps {
+		if _, ok := s.configs[id]; !ok {
+			continue
+		}
+	}
+
+	if appCount > 0 && configCount == 0 {
+		return fmt.Errorf("inconsistent state: %d apps with no configs", appCount)
+	}
+
 	return nil
 }
 

@@ -17,15 +17,16 @@ import (
 
 // Handlers holds all service references needed by HTTP handlers.
 type Handlers struct {
-	AppService       *service.AppService
-	ConfigService    *service.ConfigService
-	VersionService   *service.VersionService
-	ClientService    *service.ClientService
-	AuditService     *service.AuditService
-	RollbackService  *service.RollbackService
+	AppService        *service.AppService
+	ConfigService     *service.ConfigService
+	VersionService    *service.VersionService
+	ClientService     *service.ClientService
+	AuditService      *service.AuditService
+	RollbackService   *service.RollbackService
 	ValidationService *service.ValidationService
-	DiffService      *service.DiffService
-	logger           *logger.Logger
+	DiffService       *service.DiffService
+	logger            *logger.Logger
+	defectHandler     *DefectHandler
 }
 
 // NewHandlers creates a new Handlers instance with all services.
@@ -40,16 +41,57 @@ func NewHandlers(
 	diffSvc *service.DiffService,
 ) *Handlers {
 	return &Handlers{
-		AppService:       appSvc,
-		ConfigService:    configSvc,
-		VersionService:   versionSvc,
-		ClientService:    clientSvc,
-		AuditService:     auditSvc,
-		RollbackService:  rollbackSvc,
+		AppService:        appSvc,
+		ConfigService:     configSvc,
+		VersionService:    versionSvc,
+		ClientService:     clientSvc,
+		AuditService:      auditSvc,
+		RollbackService:   rollbackSvc,
 		ValidationService: validationSvc,
-		DiffService:      diffSvc,
-		logger:           logger.WithField("handler", "http"),
+		DiffService:       diffSvc,
+		logger:            logger.WithField("handler", "http"),
 	}
+}
+
+// SetDefectHandler sets the defect handler for defect verification endpoints.
+func (h *Handlers) SetDefectHandler(dh *DefectHandler) {
+	h.defectHandler = dh
+}
+
+// VerifyContextCancel handles the defect verification endpoint.
+func (h *Handlers) VerifyContextCancel(w http.ResponseWriter, r *http.Request) {
+	if h.defectHandler == nil {
+		response.InternalError(w, "defect handler not initialized")
+		return
+	}
+	h.defectHandler.VerifyContextCancel(w, r)
+}
+
+// VerifyContextTimeout handles the defect verification endpoint.
+func (h *Handlers) VerifyContextTimeout(w http.ResponseWriter, r *http.Request) {
+	if h.defectHandler == nil {
+		response.InternalError(w, "defect handler not initialized")
+		return
+	}
+	h.defectHandler.VerifyContextTimeout(w, r)
+}
+
+// VerifyCreateWithTimeout handles the defect verification endpoint.
+func (h *Handlers) VerifyCreateWithTimeout(w http.ResponseWriter, r *http.Request) {
+	if h.defectHandler == nil {
+		response.InternalError(w, "defect handler not initialized")
+		return
+	}
+	h.defectHandler.VerifyCreateWithTimeout(w, r)
+}
+
+// VerifyBasicFunctionality handles the defect verification endpoint.
+func (h *Handlers) VerifyBasicFunctionality(w http.ResponseWriter, r *http.Request) {
+	if h.defectHandler == nil {
+		response.InternalError(w, "defect handler not initialized")
+		return
+	}
+	h.defectHandler.VerifyBasicFunctionality(w, r)
 }
 
 // parsePath extracts path segments after the API prefix.

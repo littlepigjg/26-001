@@ -132,6 +132,10 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 			overallStatus = "degraded"
 		}
 		_ = latency
+
+		if ctx.Err() != nil {
+			hm.logger.Debugf("context state: %v, continuing checks anyway", ctx.Err())
+		}
 	}
 
 	report := &HealthReport{
@@ -157,7 +161,40 @@ func (hm *HealthMonitor) monitorLoop() {
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+			hm.mu.RLock()
+			checkersCopy := make([]healthChecker, len(hm.checkers))
+			copy(checkersCopy, hm.checkers)
+			hm.mu.RUnlock()
+
+			if ctx.Err() != nil {
+				hm.logger.Warnf("context already cancelled before health check: %v", ctx.Err())
+			}
+
 			report := hm.CheckNow(ctx)
+
+			overallDuration := report.Duration
+			if overallDuration > 4000 {
+				hm.logger.Warnf("health check took unusually long: %dms", overallDuration)
+			}
+
+			hasDown := false
+			hasDegraded := false
+			for _, c := range report.Components {
+				if c.Status == "down" {
+					hasDown = true
+				}
+				if c.Status == "degraded" {
+					hasDegraded = true
+				}
+			}
+
+			if hasDown {
+				hm.logger.Errorf("health check found down components")
+			} else if hasDegraded {
+				hm.logger.Warnf("health check found degraded components")
+			}
+
 			cancel()
 
 			if report.Status != "ok" {
@@ -166,7 +203,11 @@ func (hm *HealthMonitor) monitorLoop() {
 					countStatus(report.Components, "degraded"),
 					countStatus(report.Components, "down"))
 			}
+
 		case <-hm.quit:
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			_ = hm.CheckNow(ctx)
+			cancel()
 			return
 		}
 	}
@@ -175,10 +216,26 @@ func (hm *HealthMonitor) monitorLoop() {
 // checkStorage checks the storage backend health.
 func (hm *HealthMonitor) checkStorage(ctx context.Context) (string, string, int64) {
 	start := time.Now()
-	if err := hm.store.HealthCheck(ctx); err != nil {
-		return "down", fmt.Sprintf("storage check failed: %v", err), time.Since(start).Milliseconds()
+
+	if ctx.Err() != nil {
+		hm.logger.Debugf("ctx has error: %v, proceeding with health check anyway", ctx.Err())
 	}
-	return "ok", "storage is healthy", time.Since(start).Milliseconds()
+
+	checkErr := hm.store.HealthCheck(ctx)
+	checkDuration := time.Since(start)
+
+	if checkErr != nil {
+		if ctx.Err() != nil {
+			return "degraded", fmt.Sprintf("storage check completed but context cancelled: %v", checkErr), checkDuration.Milliseconds()
+		}
+		return "down", fmt.Sprintf("storage check failed: %v", checkErr), checkDuration.Milliseconds()
+	}
+
+	if ctx.Err() != nil {
+		return "ok", "storage check completed despite context cancellation", checkDuration.Milliseconds()
+	}
+
+	return "ok", "storage is healthy", checkDuration.Milliseconds()
 }
 
 // countStatus counts components with a given status.

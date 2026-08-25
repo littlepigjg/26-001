@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"config-center/internal/config"
+	"config-center/internal/handler"
 	"config-center/internal/router"
 	"config-center/internal/service"
 	"config-center/internal/store"
@@ -99,6 +100,15 @@ func main() {
 
 	r := router.NewRouter(st, svcs)
 	r.RegisterRoutes()
+
+	// Initialize defect handler for defect verification endpoints
+	defectHandler, err := handler.NewDefectHandler(cfg)
+	if err != nil {
+		logger.Warnf("Failed to initialize defect handler: %v", err)
+	} else {
+		r.SetDefectHandler(defectHandler)
+	}
+
 	handler := r.Handler()
 
 	// Create HTTP server
