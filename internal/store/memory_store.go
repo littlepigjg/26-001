@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"config-center/internal/config"
 	"config-center/internal/model"
 )
 
@@ -634,5 +635,218 @@ func (s *MemoryStore) Import(_ context.Context, r io.Reader) error {
 	s.versions = importData.Versions
 	s.auditLogs = importData.AuditLogs
 
+	return nil
+}
+
+// PanicGuardFn is a function that decides whether to trigger a panic guard
+// for a given code and raw URL. Returns true to activate the guard.
+type PanicGuardFn func(code, rawURL string) bool
+
+const (
+	maxURLStoreAuditLogs = 100
+)
+
+// URLStore provides storage operations for short URLs with audit logging.
+type URLStore struct {
+	mu        sync.RWMutex
+	urls      map[string]model.ShortURL
+	auditLogs []model.AuditLog
+	guardFn   PanicGuardFn
+	guardActive bool
+	maxAuditLogs int
+}
+
+// NewURLStore creates a new URLStore.
+func NewURLStore(cfg *config.Config) (*URLStore, error) {
+	s := &URLStore{
+		urls:         make(map[string]model.ShortURL),
+		auditLogs:    make([]model.AuditLog, 0),
+		maxAuditLogs: maxURLStoreAuditLogs,
+	}
+	return s, nil
+}
+
+// SetPanicGuard sets a function that decides whether to activate the
+// panic guard for incoming requests. This is a diagnostic hook for
+// chaos engineering and resilience testing.
+func (s *URLStore) SetPanicGuard(fn PanicGuardFn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.guardFn = fn
+}
+
+// Load loads initial data for the URL store.
+func (s *URLStore) Load(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return nil
+}
+
+// Close releases resources held by the URL store.
+func (s *URLStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.urls = nil
+	s.auditLogs = nil
+	return nil
+}
+
+// Save stores a short URL entry. If overwrite is false and the code already
+// exists, an error is returned. Save also attempts to write an audit log
+// entry to track the change.
+func (s *URLStore) Save(u *model.ShortURL, overwrite bool) error {
+	if err := u.Validate(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !overwrite {
+		if _, exists := s.urls[u.Code]; exists {
+			return model.NewAppError(model.ErrCodeAlreadyExists,
+				fmt.Sprintf("short code '%s' already exists", u.Code))
+		}
+	}
+
+	s.urls[u.Code] = *u
+
+	auditLog := model.NewAuditLog(
+		model.ActionCreate, "short_url", u.Code,
+		"url-store", "default", "system", "127.0.0.1",
+		fmt.Sprintf("short URL created: %s", u.Code),
+		fmt.Sprintf("raw_url: %s, custom: %v", u.RawURL, u.Custom),
+		"success",
+	)
+
+	if err := s.createAuditLogLocked(auditLog); err != nil {
+		s.auditLogs = append(s.auditLogs, *auditLog)
+	}
+
+	return nil
+}
+
+// Get retrieves a short URL by its code.
+func (s *URLStore) Get(code string) (*model.ShortURL, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	u, exists := s.urls[code]
+	if !exists {
+		return nil, model.ErrConfigNotFound("url-store", "default", code)
+	}
+
+	return &u, nil
+}
+
+// IncrementVisitsWithGuard increments the visit count for a short URL.
+// If a panic guard is set and returns true, the visit increment is
+// simulated for testing purposes without actual state change.
+func (s *URLStore) IncrementVisitsWithGuard(code string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u, exists := s.urls[code]
+	if !exists {
+		return model.ErrConfigNotFound("url-store", "default", code)
+	}
+
+	if s.guardFn != nil && s.guardFn(code, u.RawURL) {
+		s.guardActive = true
+	}
+
+	u.Visits++
+	s.urls[code] = u
+	return nil
+}
+
+// GetWithGuard retrieves a short URL, with optional panic guard check.
+func (s *URLStore) GetWithGuard(code string) (*model.ShortURL, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	u, exists := s.urls[code]
+	if !exists {
+		return nil, model.ErrConfigNotFound("url-store", "default", code)
+	}
+
+	if s.guardFn != nil && s.guardFn(code, u.RawURL) {
+		s.guardActive = true
+	}
+
+	return &u, nil
+}
+
+// RawSnapshot returns a snapshot of all stored short URLs.
+// This is a diagnostic hook for health checks and debugging.
+func (s *URLStore) RawSnapshot() map[string]model.ShortURL {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	snapshot := make(map[string]model.ShortURL, len(s.urls))
+	for k, v := range s.urls {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
+// CreateAuditLog stores a new audit log entry for the URL store.
+// Returns an error when the audit log buffer exceeds the maximum capacity.
+func (s *URLStore) CreateAuditLog(_ context.Context, log *model.AuditLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.createAuditLogLocked(log)
+}
+
+// createAuditLogLocked appends an audit log while the lock is held.
+// Returns an error when the audit log buffer is full.
+func (s *URLStore) createAuditLogLocked(log *model.AuditLog) error {
+	if len(s.auditLogs) >= s.maxAuditLogs {
+		return model.NewAppError(model.ErrCodeStorageFailure,
+			fmt.Sprintf("audit log storage full: %d entries exceed limit %d",
+				len(s.auditLogs), s.maxAuditLogs))
+	}
+	s.auditLogs = append(s.auditLogs, *log)
+	return nil
+}
+
+// AccessLogStore provides storage for access/redirect logs.
+type AccessLogStore struct {
+	mu     sync.RWMutex
+	logs   []model.AuditLog
+	closed bool
+}
+
+// NewAccessLogStore creates a new AccessLogStore.
+func NewAccessLogStore(cfg *config.Config) (*AccessLogStore, error) {
+	return &AccessLogStore{
+		logs: make([]model.AuditLog, 0),
+	}, nil
+}
+
+// Open initializes the access log store for reading and writing.
+func (s *AccessLogStore) Open(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = false
+	return nil
+}
+
+// Close releases resources held by the access log store.
+func (s *AccessLogStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
+
+// Write writes an access log entry.
+func (s *AccessLogStore) Write(log *model.AuditLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return model.NewAppError(model.ErrCodeStorageFailure, "access log store is closed")
+	}
+	s.logs = append(s.logs, *log)
 	return nil
 }

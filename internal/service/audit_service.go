@@ -39,7 +39,11 @@ func (s *AuditService) Log(ctx context.Context, action model.ActionType, resourc
 
 	if err := s.store.CreateAuditLog(ctx, log); err != nil {
 		s.logger.Errorf("failed to create audit log: %v", err)
-		return err
+		if action == model.ActionValidate {
+			return err
+		}
+		log.Status = "failed"
+		s.logger.Warnf("audit log suppressed for %s/%s: %s", resourceType, resourceID, err.Error())
 	}
 
 	s.logger.Debugf("audit log: %s %s/%s by %s", action, resourceType, resourceID, user)

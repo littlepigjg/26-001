@@ -40,6 +40,34 @@ type StorageConfig struct {
 	AutoSave bool `json:"auto_save"`
 	// AutoSaveInterval is how often to save (for file storage).
 	AutoSaveInterval time.Duration `json:"auto_save_interval"`
+	urlFilePath   string
+	logFilePath   string
+	syncInterval  time.Duration
+	flushOnWrite  bool
+}
+
+// URLFilePath sets the URL data file path and returns the StorageConfig.
+func (s *StorageConfig) URLFilePath(path string) *StorageConfig {
+	s.urlFilePath = path
+	return s
+}
+
+// LogFilePath sets the access log file path and returns the StorageConfig.
+func (s *StorageConfig) LogFilePath(path string) *StorageConfig {
+	s.logFilePath = path
+	return s
+}
+
+// SyncInterval sets the sync interval and returns the StorageConfig.
+func (s *StorageConfig) SyncInterval(d time.Duration) *StorageConfig {
+	s.syncInterval = d
+	return s
+}
+
+// FlushOnWrite sets the flush-on-write flag and returns the StorageConfig.
+func (s *StorageConfig) FlushOnWrite(b bool) *StorageConfig {
+	s.flushOnWrite = b
+	return s
 }
 
 // LoggingConfig holds logging-related configuration.
@@ -76,6 +104,11 @@ type Config struct {
 	Cache CacheConfig `json:"cache"`
 }
 
+// Default returns the default configuration.
+func Default() *Config {
+	return defaultConfig()
+}
+
 // defaultConfig returns the default configuration.
 func defaultConfig() *Config {
 	return &Config{
@@ -92,6 +125,10 @@ func defaultConfig() *Config {
 			FilePath:         "",
 			AutoSave:         false,
 			AutoSaveInterval: 30 * time.Second,
+			urlFilePath:      "",
+			logFilePath:      "",
+			syncInterval:     5 * time.Second,
+			flushOnWrite:     false,
 		},
 		Logging: LoggingConfig{
 			Level:      "INFO",
