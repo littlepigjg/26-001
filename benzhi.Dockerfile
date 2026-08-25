@@ -1,21 +1,21 @@
-FROM golang:1.22
+FROM golang:1.22-alpine
 
 WORKDIR /app
 
-# Copy go module files first for better caching
+# Copy go mod files first for better caching
 COPY go.mod ./
 
 # Copy all source code
 COPY . .
 
-# Download dependencies (only standard library used, so this is a no-op)
-RUN go mod download
+# Build the project to verify compilation
+RUN CGO_ENABLED=0 GOOS=linux go build -o /config-center ./cmd/server && echo 'BUILD OK'
 
-# Build the project
-RUN go build ./...
+# Run go vet to verify static analysis
+RUN go vet ./... && echo 'VET OK'
 
 # Expose the default port
 EXPOSE 8080
 
 # Start the server
-CMD ["go", "run", "./cmd/server"]
+CMD ["/config-center"]
