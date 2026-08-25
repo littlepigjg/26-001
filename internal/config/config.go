@@ -68,12 +68,14 @@ type CacheConfig struct {
 type Config struct {
 	// Server holds server-specific settings.
 	Server ServerConfig `json:"server"`
-	// Storage holds storage backend settings.
-	Storage StorageConfig `json:"storage"`
+	// Storage holds storage backend settings (legacy config-center storage).
+	StorageConfig StorageConfig `json:"storage"`
 	// Logging holds logging settings.
 	Logging LoggingConfig `json:"logging"`
 	// Cache holds cache settings.
 	Cache CacheConfig `json:"cache"`
+	// Storage holds the URL shortener storage backend configuration.
+	Storage *Storage `json:"-"`
 }
 
 // defaultConfig returns the default configuration.
@@ -87,7 +89,7 @@ func defaultConfig() *Config {
 			IdleTimeout:     120 * time.Second,
 			ShutdownTimeout: 10 * time.Second,
 		},
-		Storage: StorageConfig{
+		StorageConfig: StorageConfig{
 			Type:             "memory",
 			FilePath:         "",
 			AutoSave:         false,
@@ -104,6 +106,7 @@ func defaultConfig() *Config {
 			DefaultTTL: 5 * time.Minute,
 			MaxSize:    10000,
 		},
+		Storage: &Storage{},
 	}
 }
 
@@ -158,10 +161,10 @@ func loadFromEnv(cfg *Config) {
 		cfg.Logging.Level = strings.ToUpper(v)
 	}
 	if v := os.Getenv("STORAGE_TYPE"); v != "" {
-		cfg.Storage.Type = v
+		cfg.StorageConfig.Type = v
 	}
 	if v := os.Getenv("STORAGE_FILE_PATH"); v != "" {
-		cfg.Storage.FilePath = v
+		cfg.StorageConfig.FilePath = v
 	}
 	if v := os.Getenv("CACHE_ENABLED"); v != "" {
 		cfg.Cache.Enabled = strings.ToLower(v) == "true" || v == "1"
@@ -199,7 +202,7 @@ func (c *Config) GetLoggerLevel() logger.Level {
 // String returns a human-readable representation of the configuration (without sensitive data).
 func (c *Config) String() string {
 	return fmt.Sprintf("Server: %s:%d, Storage: %s, LogLevel: %s, Cache: %v",
-		c.Server.Host, c.Server.Port, c.Storage.Type, c.Logging.Level, c.Cache.Enabled)
+		c.Server.Host, c.Server.Port, c.StorageConfig.Type, c.Logging.Level, c.Cache.Enabled)
 }
 
 // Provider is a thread-safe configuration provider that allows runtime configuration changes.
@@ -231,4 +234,84 @@ func (p *Provider) Update(cfg *Config) error {
 	defer p.mu.Unlock()
 	p.config = cfg
 	return nil
+}
+
+// Default returns a Config with sensible defaults for the URL shortener service.
+func Default() *Config {
+	return &Config{
+		Server: ServerConfig{
+			Host:            "0.0.0.0",
+			Port:            8080,
+			ReadTimeout:     30 * time.Second,
+			WriteTimeout:    30 * time.Second,
+			IdleTimeout:     120 * time.Second,
+			ShutdownTimeout: 10 * time.Second,
+		},
+		StorageConfig: StorageConfig{
+			Type:             "memory",
+			FilePath:         "",
+			AutoSave:         false,
+			AutoSaveInterval: 30 * time.Second,
+		},
+		Logging: LoggingConfig{
+			Level:      "INFO",
+			Output:     "stdout",
+			Format:     "text",
+			ShowCaller: true,
+		},
+		Cache: CacheConfig{
+			Enabled:    true,
+			DefaultTTL: 5 * time.Minute,
+			MaxSize:    10000,
+		},
+		Storage: &Storage{},
+	}
+}
+
+// Storage holds the URL storage backend configuration.
+type Storage struct {
+	urlFilePath   string
+	logFilePath   string
+	syncInterval  time.Duration
+	flushOnWrite  bool
+}
+
+// URLFilePath sets the file path for URL data persistence.
+func (s *Storage) URLFilePath(path string) {
+	s.urlFilePath = path
+}
+
+// LogFilePath sets the file path for access log persistence.
+func (s *Storage) LogFilePath(path string) {
+	s.logFilePath = path
+}
+
+// SyncInterval sets the interval for syncing data to persistent storage.
+func (s *Storage) SyncInterval(d time.Duration) {
+	s.syncInterval = d
+}
+
+// FlushOnWrite sets whether to flush data to disk immediately after each write.
+func (s *Storage) FlushOnWrite(flush bool) {
+	s.flushOnWrite = flush
+}
+
+// URLFilePath returns the configured URL file path.
+func (s *Storage) GetURLFilePath() string {
+	return s.urlFilePath
+}
+
+// LogFilePath returns the configured log file path.
+func (s *Storage) GetLogFilePath() string {
+	return s.logFilePath
+}
+
+// SyncInterval returns the configured sync interval.
+func (s *Storage) GetSyncInterval() time.Duration {
+	return s.syncInterval
+}
+
+// FlushOnWrite returns whether flush-on-write is enabled.
+func (s *Storage) GetFlushOnWrite() bool {
+	return s.flushOnWrite
 }

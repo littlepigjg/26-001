@@ -38,11 +38,11 @@ func main() {
 
 	// Initialize store
 	var st store.Store
-	switch cfg.Storage.Type {
+	switch cfg.StorageConfig.Type {
 	case "memory":
 		st = store.NewMemoryStore()
 	case "file":
-		if cfg.Storage.FilePath == "" {
+		if cfg.StorageConfig.FilePath == "" {
 			logger.Warnf("No file path specified for file storage, using memory store")
 			st = store.NewMemoryStore()
 		} else {
@@ -51,7 +51,7 @@ func main() {
 			st = store.NewMemoryStore()
 		}
 	default:
-		logger.Infof("Using in-memory store (type: %s)", cfg.Storage.Type)
+		logger.Infof("Using in-memory store (type: %s)", cfg.StorageConfig.Type)
 		st = store.NewMemoryStore()
 	}
 

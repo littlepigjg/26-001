@@ -11,11 +11,12 @@ COPY . .
 # Download dependencies (only standard library used, so this is a no-op)
 RUN go mod download
 
-# Build the project
-RUN go build ./...
+# Build the project with CGO disabled for cross-architecture compatibility
+ENV CGO_ENABLED=0
+RUN go build -o server ./cmd/server
 
 # Expose the default port
 EXPOSE 8080
 
 # Start the server
-CMD ["go", "run", "./cmd/server"]
+CMD ["./server"]
