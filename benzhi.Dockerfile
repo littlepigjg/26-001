@@ -8,11 +8,11 @@ COPY go.mod ./
 # Copy all source code
 COPY . .
 
-# Download dependencies (only standard library used, so this is a no-op)
+# Download dependencies
 RUN go mod download
 
-# Build the project
-RUN go build ./...
+# Build the project with CGO disabled for cross-platform compatibility
+RUN CGO_ENABLED=0 go build ./...
 
 # Expose the default port
 EXPOSE 8080
