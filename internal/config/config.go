@@ -40,6 +40,12 @@ type StorageConfig struct {
 	AutoSave bool `json:"auto_save"`
 	// AutoSaveInterval is how often to save (for file storage).
 	AutoSaveInterval time.Duration `json:"auto_save_interval"`
+
+	// ShortURL storage settings (settable via method setters).
+	shortURLPath    string
+	accessLogPath   string
+	shortURLSync    time.Duration
+	shortURLFlushOn bool
 }
 
 // LoggingConfig holds logging-related configuration.
@@ -92,6 +98,10 @@ func defaultConfig() *Config {
 			FilePath:         "",
 			AutoSave:         false,
 			AutoSaveInterval: 30 * time.Second,
+			shortURLPath:     "./data/short_urls.json",
+			accessLogPath:    "./data/access.log",
+			shortURLSync:     30 * time.Second,
+			shortURLFlushOn:  true,
 		},
 		Logging: LoggingConfig{
 			Level:      "INFO",
@@ -201,6 +211,37 @@ func (c *Config) String() string {
 	return fmt.Sprintf("Server: %s:%d, Storage: %s, LogLevel: %s, Cache: %v",
 		c.Server.Host, c.Server.Port, c.Storage.Type, c.Logging.Level, c.Cache.Enabled)
 }
+
+// Default returns a Config populated with reasonable defaults.
+func Default() *Config {
+	return defaultConfig()
+}
+
+// URLFilePath sets the path where the URL store is persisted.
+func (s *StorageConfig) URLFilePath(p string) {
+	s.shortURLPath = p
+}
+
+// LogFilePath sets the path where the access log is persisted.
+func (s *StorageConfig) LogFilePath(p string) {
+	s.accessLogPath = p
+}
+
+// SyncInterval sets how often the store flushes to disk.
+func (s *StorageConfig) SyncInterval(d time.Duration) {
+	s.shortURLSync = d
+}
+
+// FlushOnWrite controls whether every Save call immediately flushes.
+func (s *StorageConfig) FlushOnWrite(b bool) {
+	s.shortURLFlushOn = b
+}
+
+// Getters used by the store / service packages.
+func (s *StorageConfig) ShortURLPathValue() string        { return s.shortURLPath }
+func (s *StorageConfig) AccessLogPathValue() string       { return s.accessLogPath }
+func (s *StorageConfig) ShortURLSyncValue() time.Duration { return s.shortURLSync }
+func (s *StorageConfig) ShortURLFlushOnValue() bool      { return s.shortURLFlushOn }
 
 // Provider is a thread-safe configuration provider that allows runtime configuration changes.
 type Provider struct {

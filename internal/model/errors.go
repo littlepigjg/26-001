@@ -124,8 +124,8 @@ func ErrConfigNotFound(appID, env, key string) *AppError {
 	}
 }
 
-// ErrVersionNotFound creates a version not-found error.
-func ErrVersionNotFound(appID string, version int) *AppError {
+// ErrVersionNotFoundForApp creates a version not-found error.
+func ErrVersionNotFoundForApp(appID string, version int) *AppError {
 	return &AppError{
 		Code:    ErrCodeNotFound,
 		Message: fmt.Sprintf("version %d not found for app '%s'", version, appID),

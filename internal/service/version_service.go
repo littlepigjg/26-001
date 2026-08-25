@@ -100,7 +100,7 @@ func (s *VersionService) GetLatestVersion(ctx context.Context, appID, env string
 		return nil, err
 	}
 	if latest == 0 {
-		return nil, model.ErrVersionNotFound(appID, 0)
+		return nil, model.ErrVersionNotFoundForApp(appID, 0)
 	}
 	return s.store.GetVersion(ctx, appID, env, latest)
 }

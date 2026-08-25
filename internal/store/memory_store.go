@@ -390,17 +390,17 @@ func (s *MemoryStore) GetVersion(_ context.Context, appID, env string, versionNu
 
 	appVersions, exists := s.versions[appID]
 	if !exists {
-		return nil, model.ErrVersionNotFound(appID, versionNumber)
+		return nil, model.ErrVersionNotFoundForApp(appID, versionNumber)
 	}
 
 	envVersions, exists := appVersions[env]
 	if !exists {
-		return nil, model.ErrVersionNotFound(appID, versionNumber)
+		return nil, model.ErrVersionNotFoundForApp(appID, versionNumber)
 	}
 
 	version, exists := envVersions[versionNumber]
 	if !exists {
-		return nil, model.ErrVersionNotFound(appID, versionNumber)
+		return nil, model.ErrVersionNotFoundForApp(appID, versionNumber)
 	}
 
 	return version, nil
