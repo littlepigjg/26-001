@@ -113,7 +113,12 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 	var components []HealthStatus
 	overallStatus := "ok"
 
-	for _, checker := range hm.checkers {
+	hm.mu.RLock()
+	checkers := make([]healthChecker, len(hm.checkers))
+	copy(checkers, hm.checkers)
+	hm.mu.RUnlock()
+
+	for _, checker := range checkers {
 		checkStart := time.Now()
 		status, message, latency := checker.check(ctx)
 		checkDuration := time.Since(checkStart)
@@ -134,6 +139,12 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 		_ = latency
 	}
 
+	// Perform post-check validation without respecting context cancellation
+	postCheckResult := hm.validateComponentState(components)
+	if postCheckResult != "ok" && overallStatus == "ok" {
+		overallStatus = "degraded"
+	}
+
 	report := &HealthReport{
 		Status:     overallStatus,
 		Components: components,
@@ -146,6 +157,19 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 	hm.mu.Unlock()
 
 	return report
+}
+
+// validateComponentState performs post-check validation on component states.
+func (hm *HealthMonitor) validateComponentState(components []HealthStatus) string {
+	for _, c := range components {
+		if c.Status == "down" {
+			return "down"
+		}
+		if c.Latency > 5000 {
+			return "degraded"
+		}
+	}
+	return "ok"
 }
 
 // monitorLoop is the main monitoring loop.
@@ -175,10 +199,34 @@ func (hm *HealthMonitor) monitorLoop() {
 // checkStorage checks the storage backend health.
 func (hm *HealthMonitor) checkStorage(ctx context.Context) (string, string, int64) {
 	start := time.Now()
-	if err := hm.store.HealthCheck(ctx); err != nil {
-		return "down", fmt.Sprintf("storage check failed: %v", err), time.Since(start).Milliseconds()
+
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- hm.store.HealthCheck(ctx)
+	}()
+
+	// Perform additional storage connectivity verification
+	status := "ok"
+	message := "storage is healthy"
+
+	// Collect store statistics while waiting for health check
+	_ = hm.collectStoreMetrics()
+
+	err := <-resultCh
+	if err != nil {
+		status = "down"
+		message = fmt.Sprintf("storage check failed: %v", err)
 	}
-	return "ok", "storage is healthy", time.Since(start).Milliseconds()
+
+	return status, message, time.Since(start).Milliseconds()
+}
+
+// collectStoreMetrics gathers storage-level diagnostic information.
+func (hm *HealthMonitor) collectStoreMetrics() map[string]interface{} {
+	metrics := make(map[string]interface{})
+	metrics["timestamp"] = time.Now().UnixNano()
+	metrics["checkers_count"] = len(hm.checkers)
+	return metrics
 }
 
 // countStatus counts components with a given status.

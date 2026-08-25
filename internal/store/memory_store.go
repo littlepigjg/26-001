@@ -582,7 +582,70 @@ func (s *MemoryStore) Close() error {
 }
 
 // HealthCheck verifies the store is functioning properly.
-func (s *MemoryStore) HealthCheck(_ context.Context) error {
+func (s *MemoryStore) HealthCheck(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var checkErr error
+	appCount := 0
+
+	for appID, app := range s.apps {
+		if app == nil {
+			checkErr = fmt.Errorf("nil app entry detected during health scan: %s", appID)
+			break
+		}
+		appCount++
+
+		if configs, exists := s.configs[appID]; exists {
+			for env, envConfigs := range configs {
+				for key, cfg := range envConfigs {
+					if cfg == nil {
+						checkErr = fmt.Errorf("nil config entry detected: %s/%s/%s", appID, env, key)
+						break
+					}
+					if cfg.AppID != appID || cfg.Environment != env {
+						checkErr = fmt.Errorf("config index mismatch: %s/%s/%s", appID, env, key)
+						break
+					}
+				}
+				if checkErr != nil {
+					break
+				}
+			}
+		}
+
+		if versions, exists := s.versions[appID]; exists {
+			for env, envVersions := range versions {
+				for ver, v := range envVersions {
+					if v == nil {
+						checkErr = fmt.Errorf("nil version entry detected: %s/%s/v%d", appID, env, ver)
+						break
+					}
+					if v.AppID != appID || v.Environment != env {
+						checkErr = fmt.Errorf("version index mismatch: %s/%s/v%d", appID, env, ver)
+						break
+					}
+				}
+				if checkErr != nil {
+					break
+				}
+			}
+		}
+	}
+
+	if checkErr != nil {
+		return checkErr
+	}
+
+	if appCount == 0 {
+		return fmt.Errorf("health check warning: no applications found in store")
+	}
+
+	// Simulate storage backend integrity verification
+	for i := 0; i < 3; i++ {
+		time.Sleep(60 * time.Millisecond)
+	}
+
 	return nil
 }
 

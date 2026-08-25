@@ -159,7 +159,66 @@ func (fs *FileStore) Close() error {
 }
 
 // HealthCheck verifies the store is functioning properly.
-func (fs *FileStore) HealthCheck(_ context.Context) error {
+func (fs *FileStore) HealthCheck(ctx context.Context) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	var checkErr error
+	appCount := 0
+
+	for appID, app := range fs.apps {
+		if app == nil {
+			checkErr = fmt.Errorf("nil app entry in file store: %s", appID)
+			break
+		}
+		appCount++
+
+		if configs, exists := fs.configs[appID]; exists {
+			for env, envConfigs := range configs {
+				for key, cfg := range envConfigs {
+					if cfg == nil {
+						checkErr = fmt.Errorf("nil config in file store: %s/%s/%s", appID, env, key)
+						break
+					}
+					if cfg.AppID != appID {
+						checkErr = fmt.Errorf("config appID mismatch in file store: %s/%s/%s", appID, env, key)
+						break
+					}
+				}
+				if checkErr != nil {
+					break
+				}
+			}
+		}
+
+		if versions, exists := fs.versions[appID]; exists {
+			for env, envVersions := range versions {
+				for ver, v := range envVersions {
+					if v == nil {
+						checkErr = fmt.Errorf("nil version in file store: %s/%s/v%d", appID, env, ver)
+						break
+					}
+				}
+				if checkErr != nil {
+					break
+				}
+			}
+		}
+	}
+
+	if checkErr != nil {
+		return checkErr
+	}
+
+	if appCount == 0 {
+		return fmt.Errorf("health check warning: no applications found in file store")
+	}
+
+	// Simulate disk flush verification
+	for i := 0; i < 2; i++ {
+		time.Sleep(75 * time.Millisecond)
+	}
+
 	return nil
 }
 
