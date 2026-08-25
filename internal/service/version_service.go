@@ -12,12 +12,18 @@ import (
 	"config-center/pkg/logger"
 )
 
+// PanicGuardFn is a fault injection hook for testing failure scenarios.
+// Returning an error simulates a system failure (e.g., disk full, network down).
+type PanicGuardFn func(ctx context.Context) error
+
 // VersionService manages configuration version history.
 type VersionService struct {
 	store   store.Store
 	appSvc  *AppService
 	configSvc *ConfigService
 	logger  *logger.Logger
+
+	panicGuard PanicGuardFn
 }
 
 // NewVersionService creates a new VersionService.
@@ -28,6 +34,35 @@ func NewVersionService(s store.Store, appSvc *AppService, configSvc *ConfigServi
 		configSvc: configSvc,
 		logger:   logger.WithField("service", "version"),
 	}
+}
+
+// SetPanicGuard sets a fault injection hook for testing failure scenarios.
+// When set, the guard is called before critical operations to simulate failures.
+func (s *VersionService) SetPanicGuard(guard PanicGuardFn) {
+	s.panicGuard = guard
+}
+
+// GetVersionWithGuard retrieves a specific version with fault injection support.
+func (s *VersionService) GetVersionWithGuard(ctx context.Context, appID, env string, versionNumber int) (*model.Version, error) {
+	if s.panicGuard != nil {
+		if err := s.panicGuard(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return s.store.GetVersion(ctx, appID, env, versionNumber)
+}
+
+// RawSnapshot returns the latest version without any guard checks.
+// This is a diagnostic API for directly accessing the raw snapshot data.
+func (s *VersionService) RawSnapshot(ctx context.Context, appID, env string) (*model.Version, error) {
+	latestVersion, err := s.store.GetLatestVersionNumber(ctx, appID, env)
+	if err != nil {
+		return nil, err
+	}
+	if latestVersion == 0 {
+		return nil, model.ErrVersionNotFound(appID, 0)
+	}
+	return s.store.GetVersion(ctx, appID, env, latestVersion)
 }
 
 // CreateVersion creates a new version snapshot of the current configuration.
@@ -74,8 +109,16 @@ func (s *VersionService) CreateVersion(ctx context.Context, appID, env, changedB
 		return nil, err
 	}
 
+	var stored *model.Version
+	if tmp, err := s.GetVersionWithGuard(ctx, appID, env, newVersionNumber); err != nil {
+		s.logger.Warnf("version created but verification failed for %s/%s v%d: %v", appID, env, newVersionNumber, err)
+		return nil, err
+	} else {
+		stored = tmp
+	}
+
 	s.logger.Infof("created version %d for %s/%s (hash: %s)", newVersionNumber, appID, env, configHash)
-	return version, nil
+	return stored, nil
 }
 
 // GetVersion retrieves a specific version by number.
@@ -204,7 +247,7 @@ func (s *VersionService) AutoSnapshot(ctx context.Context, appID, env, changedBy
 
 	if latestVersion > 0 {
 		latest, err := s.store.GetVersion(ctx, appID, env, latestVersion)
-		if err == nil && latest.ConfigHash == currentHash {
+		if err == nil && latest != nil && latest.ConfigHash == currentHash {
 			// No changes
 			return latestVersion, false, nil
 		}

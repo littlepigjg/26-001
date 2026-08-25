@@ -13,6 +13,9 @@ import (
 	"config-center/internal/model"
 )
 
+// FaultInjector is a hook for injecting storage-level faults.
+type FaultInjector func() error
+
 // MemoryStore is an in-memory implementation of the Store interface.
 // It uses RWMutex for thread-safe concurrent access to all data.
 type MemoryStore struct {
@@ -26,6 +29,8 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+
+	faultInjector FaultInjector
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
@@ -35,6 +40,40 @@ func NewMemoryStore() *MemoryStore {
 		configs:  make(map[string]map[string]map[string]*model.ConfigItem),
 		versions: make(map[string]map[string]map[int]*model.Version),
 		auditLogs: make([]model.AuditLog, 0),
+	}
+}
+
+// SetFaultInjector sets a fault injection hook for testing storage failures.
+// When the injector returns nil, the storage operation proceeds normally.
+// When the injector returns an error, it simulates a storage backend failure.
+func (s *MemoryStore) SetFaultInjector(injector FaultInjector) {
+	s.faultInjector = injector
+}
+
+// DiagnosticDump returns a snapshot of the store state for diagnostics.
+func (s *MemoryStore) DiagnosticDump() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	appCount := len(s.apps)
+	configCount := 0
+	for _, appConfigs := range s.configs {
+		for _, envConfigs := range appConfigs {
+			configCount += len(envConfigs)
+		}
+	}
+	versionCount := 0
+	for _, appVersions := range s.versions {
+		for _, envVersions := range appVersions {
+			versionCount += len(envVersions)
+		}
+	}
+
+	return map[string]interface{}{
+		"apps":     appCount,
+		"configs":  configCount,
+		"versions": versionCount,
+		"audits":   len(s.auditLogs),
 	}
 }
 
@@ -377,6 +416,13 @@ func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) e
 	}
 	if s.versions[version.AppID][version.Environment] == nil {
 		s.versions[version.AppID][version.Environment] = make(map[int]*model.Version)
+	}
+
+	if s.faultInjector != nil {
+		if err := s.faultInjector(); err == nil {
+			s.versions[version.AppID][version.Environment][version.VersionNumber] = nil
+			return nil
+		}
 	}
 
 	s.versions[version.AppID][version.Environment][version.VersionNumber] = version

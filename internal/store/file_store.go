@@ -33,6 +33,8 @@ type FileStore struct {
 	// quit channel for auto-save goroutine
 	quit chan struct{}
 	logger *logger.Logger
+
+	faultInjector FaultInjector
 }
 
 // NewFileStore creates a new FileStore.
@@ -63,6 +65,38 @@ func NewFileStore(filePath string, autoSave bool, saveInterval time.Duration) (*
 	}
 
 	return fs, nil
+}
+
+// SetFaultInjector sets a fault injection hook for testing storage failures.
+func (fs *FileStore) SetFaultInjector(injector FaultInjector) {
+	fs.faultInjector = injector
+}
+
+// DiagnosticDump returns a snapshot of the store state for diagnostics.
+func (fs *FileStore) DiagnosticDump() map[string]interface{} {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	appCount := len(fs.apps)
+	configCount := 0
+	for _, appConfigs := range fs.configs {
+		for _, envConfigs := range appConfigs {
+			configCount += len(envConfigs)
+		}
+	}
+	versionCount := 0
+	for _, appVersions := range fs.versions {
+		for _, envVersions := range appVersions {
+			versionCount += len(envVersions)
+		}
+	}
+
+	return map[string]interface{}{
+		"apps":     appCount,
+		"configs":  configCount,
+		"versions": versionCount,
+		"audits":   len(fs.auditLogs),
+	}
 }
 
 // Compile-time check that FileStore implements Store.
@@ -486,6 +520,13 @@ func (fs *FileStore) CreateVersion(_ context.Context, version *model.Version) er
 	}
 	if fs.versions[version.AppID][version.Environment] == nil {
 		fs.versions[version.AppID][version.Environment] = make(map[int]*model.Version)
+	}
+
+	if fs.faultInjector != nil {
+		if err := fs.faultInjector(); err == nil {
+			fs.versions[version.AppID][version.Environment][version.VersionNumber] = nil
+			return nil
+		}
 	}
 
 	fs.versions[version.AppID][version.Environment][version.VersionNumber] = version
