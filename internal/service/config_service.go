@@ -14,6 +14,7 @@ import (
 type ConfigService struct {
 	store    store.Store
 	appSvc   *AppService
+	auditSvc *AuditService
 	logger   *logger.Logger
 }
 
@@ -23,6 +24,19 @@ func NewConfigService(s store.Store, appSvc *AppService) *ConfigService {
 		store:  s,
 		appSvc: appSvc,
 		logger: logger.WithField("service", "config"),
+	}
+}
+
+// AttachAuditService binds an audit service for logging configuration changes.
+func (s *ConfigService) AttachAuditService(auditSvc *AuditService) {
+	s.auditSvc = auditSvc
+}
+
+// SetAuditStorageCapacity configures the underlying store's audit log capacity.
+// This wraps the audit service's hook for convenient access during testing and load operations.
+func (s *ConfigService) SetAuditStorageCapacity(n int) {
+	if s.auditSvc != nil {
+		s.auditSvc.SetStoreAuditLogCapacity(n)
 	}
 }
 
@@ -77,6 +91,8 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 		return nil, err
 	}
 
+	oldValue := existing.Value
+
 	// Update fields
 	if value != "" {
 		existing.Value = value
@@ -97,6 +113,10 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 	if err := s.store.UpdateConfig(ctx, existing); err != nil {
 		s.logger.Errorf("failed to update config %s/%s/%s: %v", appID, env, key, err)
 		return nil, err
+	}
+
+	if s.auditSvc != nil && value != "" {
+		s.auditSvc.LogConfigChange(ctx, appID, env, key, updatedBy, "", oldValue, value)
 	}
 
 	s.logger.Infof("updated config: %s/%s/%s (v%d)", appID, env, key, existing.Version)

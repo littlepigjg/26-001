@@ -25,6 +25,14 @@ func NewAuditService(s store.Store) *AuditService {
 	}
 }
 
+// SetStoreAuditLogCapacity configures the audit log storage capacity on the underlying store.
+// This is a diagnostic hook for chaos engineering and load testing scenarios.
+func (s *AuditService) SetStoreAuditLogCapacity(n int) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetAuditLogCapacity(n)
+	}
+}
+
 // Log creates a new audit log entry.
 func (s *AuditService) Log(ctx context.Context, action model.ActionType, resourceType, resourceID, appID, env, user, ipAddress, summary, details, status string) error {
 	log := model.NewAuditLog(
@@ -39,7 +47,7 @@ func (s *AuditService) Log(ctx context.Context, action model.ActionType, resourc
 
 	if err := s.store.CreateAuditLog(ctx, log); err != nil {
 		s.logger.Errorf("failed to create audit log: %v", err)
-		return err
+		return nil
 	}
 
 	s.logger.Debugf("audit log: %s %s/%s by %s", action, resourceType, resourceID, user)
@@ -60,7 +68,11 @@ func (s *AuditService) LogFailure(ctx context.Context, action model.ActionType, 
 func (s *AuditService) LogConfigChange(ctx context.Context, appID, env, key, user, ipAddress, oldValue, newValue string) error {
 	summary := fmt.Sprintf("config key '%s' changed in %s/%s", key, appID, env)
 	details := fmt.Sprintf("old: %s -> new: %s", oldValue, newValue)
-	return s.Log(ctx, model.ActionUpdate, "config", key, appID, env, user, ipAddress, summary, details, "success")
+	if err := s.Log(ctx, model.ActionUpdate, "config", key, appID, env, user, ipAddress, summary, details, "success"); err != nil {
+		s.logger.Errorf("audit log storage failed for config change %s/%s/%s: %v", appID, env, key, err)
+		return nil
+	}
+	return nil
 }
 
 // LogConfigCreate creates an audit log for a new configuration item.

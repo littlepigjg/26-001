@@ -26,6 +26,8 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+	// auditLogCapacity limits the maximum number of audit logs (0 = unlimited)
+	auditLogCapacity int
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
@@ -503,10 +505,30 @@ func (s *MemoryStore) DeleteVersionsBefore(_ context.Context, appID, env string,
 	return nil
 }
 
+// SetAuditLogCapacity configures the maximum number of audit logs allowed.
+// When capacity is reached, CreateAuditLog will return ErrStorageFull.
+// A value of 0 means unlimited (default).
+func (s *MemoryStore) SetAuditLogCapacity(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.auditLogCapacity = n
+}
+
+// AuditLogCount returns the current number of audit logs stored.
+func (s *MemoryStore) AuditLogCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.auditLogs)
+}
+
 // CreateAuditLog stores a new audit log entry.
 func (s *MemoryStore) CreateAuditLog(_ context.Context, log *model.AuditLog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.auditLogCapacity > 0 && len(s.auditLogs) >= s.auditLogCapacity {
+		return model.ErrInternal(fmt.Sprintf("audit log storage full (capacity: %d)", s.auditLogCapacity))
+	}
 
 	s.auditLogs = append(s.auditLogs, *log)
 	return nil
