@@ -63,7 +63,7 @@ func (h *Handlers) createApp(w http.ResponseWriter, r *http.Request) {
 
 	app, err := h.AppService.CreateApp(r.Context(), appID, req.Name, req.Description, req.Owner)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -81,7 +81,7 @@ func (h *Handlers) listApps(w http.ResponseWriter, r *http.Request) {
 
 	apps, total, err := h.AppService.ListApps(r.Context(), page, pageSize)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *Handlers) listApps(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) getApp(w http.ResponseWriter, r *http.Request, appID string) {
 	app, err := h.AppService.GetApp(r.Context(), appID)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *Handlers) updateApp(w http.ResponseWriter, r *http.Request, appID strin
 	user := getCurrentUser(r)
 	app, err := h.AppService.UpdateApp(r.Context(), appID, req.Name, req.Description, req.Owner)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *Handlers) updateApp(w http.ResponseWriter, r *http.Request, appID strin
 func (h *Handlers) deleteApp(w http.ResponseWriter, r *http.Request, appID string) {
 	user := getCurrentUser(r)
 	if err := h.AppService.DeleteApp(r.Context(), appID); err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

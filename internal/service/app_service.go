@@ -59,7 +59,7 @@ func (s *AppService) GetApp(ctx context.Context, id string) (*model.Application,
 	app, err := s.store.GetApp(ctx, id)
 	if err != nil {
 		s.logger.Warnf("failed to get app %s: %v", id, err)
-		return nil, err
+		return nil, fmt.Errorf("retrieve application failed: %w", err)
 	}
 
 	return app, nil
@@ -70,7 +70,7 @@ func (s *AppService) UpdateApp(ctx context.Context, id string, name, description
 	// Get existing app
 	app, err := s.store.GetApp(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load application for update failed: %w", err)
 	}
 
 	// Update fields
@@ -106,7 +106,7 @@ func (s *AppService) DeleteApp(ctx context.Context, id string) error {
 	// Get the app first to verify it exists
 	app, err := s.store.GetApp(ctx, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("lookup application for deletion failed: %w", err)
 	}
 
 	// Delete the app
@@ -172,7 +172,7 @@ func (s *AppService) RemoveEnvironment(ctx context.Context, appID, env string) e
 // EnsureAppExists checks if an application exists and returns an error if not.
 func (s *AppService) EnsureAppExists(ctx context.Context, appID string) error {
 	if _, err := s.store.GetApp(ctx, appID); err != nil {
-		return err
+		return fmt.Errorf("application existence check failed: %w", err)
 	}
 	return nil
 }
@@ -181,7 +181,7 @@ func (s *AppService) EnsureAppExists(ctx context.Context, appID string) error {
 func (s *AppService) EnsureAppSupportsEnv(ctx context.Context, appID, env string) error {
 	app, err := s.store.GetApp(ctx, appID)
 	if err != nil {
-		return err
+		return fmt.Errorf("application environment check failed: %w", err)
 	}
 
 	if !app.ContainsEnvironment(env) {

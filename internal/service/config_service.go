@@ -63,7 +63,7 @@ func (s *ConfigService) GetConfig(ctx context.Context, appID, env, key string) (
 	config, err := s.store.GetConfig(ctx, appID, env, key)
 	if err != nil {
 		s.logger.Warnf("failed to get config %s/%s/%s: %v", appID, env, key, err)
-		return nil, err
+		return nil, fmt.Errorf("load configuration entry failed: %w", err)
 	}
 
 	return config, nil
@@ -74,7 +74,7 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 	// Ensure the config exists
 	existing, err := s.store.GetConfig(ctx, appID, env, key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup configuration for update failed: %w", err)
 	}
 
 	// Update fields
@@ -107,7 +107,7 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 func (s *ConfigService) DeleteConfig(ctx context.Context, appID, env, key string) error {
 	// Ensure the config exists
 	if _, err := s.store.GetConfig(ctx, appID, env, key); err != nil {
-		return err
+		return fmt.Errorf("configuration deletion lookup failed: %w", err)
 	}
 
 	if err := s.store.DeleteConfig(ctx, appID, env, key); err != nil {

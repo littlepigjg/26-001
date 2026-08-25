@@ -44,7 +44,7 @@ func (h *Handlers) Rollback(w http.ResponseWriter, r *http.Request) {
 	user := getCurrentUser(r)
 	result, err := h.RollbackService.Rollback(r.Context(), req.AppID, req.Environment, req.TargetVersion, user, getClientIP(r))
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *Handlers) RollbackPreview(w http.ResponseWriter, r *http.Request) {
 
 	changes, err := h.RollbackService.GetRollbackPreview(r.Context(), appID, env, version)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

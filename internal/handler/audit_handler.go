@@ -33,7 +33,7 @@ func (h *Handlers) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs, total, err := h.AuditService.ListLogs(r.Context(), filter)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

@@ -101,7 +101,7 @@ func (h *Handlers) listConfigs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (h *Handlers) createConfig(w http.ResponseWriter, r *http.Request) {
 	user := getCurrentUser(r)
 	config, err := h.ConfigService.CreateConfig(r.Context(), req.AppID, req.Environment, req.Key, req.Value, req.Description, req.Format, user)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -151,7 +151,7 @@ func (h *Handlers) createConfig(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) getConfig(w http.ResponseWriter, r *http.Request, appID, env, key string) {
 	config, err := h.ConfigService.GetConfig(r.Context(), appID, env, key)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *Handlers) updateConfig(w http.ResponseWriter, r *http.Request, appID, e
 	user := getCurrentUser(r)
 	config, err := h.ConfigService.UpdateConfig(r.Context(), appID, env, key, req.Value, req.Description, user)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -184,7 +184,7 @@ func (h *Handlers) updateConfig(w http.ResponseWriter, r *http.Request, appID, e
 func (h *Handlers) deleteConfig(w http.ResponseWriter, r *http.Request, appID, env, key string) {
 	user := getCurrentUser(r)
 	if err := h.ConfigService.DeleteConfig(r.Context(), appID, env, key); err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

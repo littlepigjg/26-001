@@ -45,7 +45,7 @@ func (h *Handlers) DiffConfig(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.DiffService.DiffVersions(r.Context(), appID, env, v1, v2)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

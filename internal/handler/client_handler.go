@@ -25,7 +25,7 @@ func (h *Handlers) ClientPull(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.ClientService.PullConfig(r.Context(), appID, env, clientVersion)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *Handlers) ClientBatchPull(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.ClientService.BatchPullConfig(r.Context(), pullRequests)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

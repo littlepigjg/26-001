@@ -93,28 +93,34 @@ func readJSONBody(r *http.Request, v interface{}) error {
 	return nil
 }
 
-// handleError writes an appropriate error response based on the error type.
-func handleError(w http.ResponseWriter, err error) {
+// HandleError writes an appropriate error response based on the error type.
+// Exported for testing and external use.
+func HandleError(w http.ResponseWriter, err error) {
 	if err == nil {
 		return
 	}
 
 	if appErr, ok := err.(*model.AppError); ok {
-		switch {
-		case appErr.IsNotFound():
-			response.NotFound(w, appErr.Message)
-		case appErr.IsValidationError():
-			response.BadRequest(w, appErr.Message)
-		case appErr.IsConflict():
-			response.Conflict(w, appErr.Message)
-		default:
-			response.InternalError(w, appErr.Message)
-		}
+		routeAppError(w, appErr)
 		return
 	}
 
-	// Generic error
 	response.InternalError(w, err.Error())
+}
+
+func routeAppError(w http.ResponseWriter, appErr *model.AppError) {
+	switch {
+	case appErr.IsNotFound():
+		response.NotFound(w, appErr.Message)
+	case appErr.IsValidationError():
+		response.BadRequest(w, appErr.Message)
+	case appErr.IsConflict():
+		response.Conflict(w, appErr.Message)
+	case appErr.IsInternal():
+		response.InternalError(w, appErr.Message)
+	default:
+		response.InternalError(w, appErr.Message)
+	}
 }
 
 // getCurrentUser extracts the user from the request (header or default).

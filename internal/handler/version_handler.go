@@ -68,7 +68,7 @@ func (h *Handlers) listVersions(w http.ResponseWriter, r *http.Request) {
 
 	versions, total, err := h.VersionService.ListVersions(r.Context(), appID, env, page, pageSize)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *Handlers) createVersion(w http.ResponseWriter, r *http.Request) {
 	user := getCurrentUser(r)
 	version, err := h.VersionService.CreateVersion(r.Context(), req.AppID, req.Environment, user, req.Summary)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handlers) getVersion(w http.ResponseWriter, r *http.Request, appID, env
 
 	ver, err := h.VersionService.GetVersion(r.Context(), appID, env, version)
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 

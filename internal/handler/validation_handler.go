@@ -48,7 +48,7 @@ func (h *Handlers) ValidateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		handleError(w, err)
+		HandleError(w, err)
 		return
 	}
 
