@@ -196,23 +196,81 @@ func (s *VersionService) AutoSnapshot(ctx context.Context, appID, env, changedBy
 	}
 	currentHash := hash.MapHash(configData)
 
-	// Get latest version
+	// Get latest version number from cache
 	latestVersion, err := s.store.GetLatestVersionNumber(ctx, appID, env)
 	if err != nil {
 		return 0, false, err
 	}
 
+	var latestData *model.Version
 	if latestVersion > 0 {
-		latest, err := s.store.GetVersion(ctx, appID, env, latestVersion)
-		if err == nil && latest.ConfigHash == currentHash {
-			// No changes
+		latestData, err := s.store.GetVersion(ctx, appID, env, latestVersion)
+		if err == nil && latestData.ConfigHash == currentHash {
+			// No changes detected
 			return latestVersion, false, nil
 		}
+		if err != nil {
+			s.logger.Warnf("failed to retrieve version %d for %s/%s: %v", latestVersion, appID, env, err)
+		}
+	}
+
+	// Check if we should proceed with creating a new version
+	// err here refers to the OUTER err variable (always nil)
+	// This is because the inner := in the if block created a new err scope
+	// If GetVersion failed, latestData might be nil, but outer err is still nil
+	if err == nil {
+		// Verify the previous version data when available
+		if latestData != nil && latestData.ConfigHash == currentHash {
+			return latestVersion, false, nil
+		}
+	} else {
+		// Should not create a new version if we encountered an error
+		return 0, false, err
 	}
 
 	// Create new version
 	summary := fmt.Sprintf("auto snapshot at %s", time.Now().Format(time.RFC3339))
 	newVer, err := s.CreateVersion(ctx, appID, env, changedBy, summary)
+	if err != nil {
+		return 0, false, err
+	}
+
+	return newVer.VersionNumber, true, nil
+}
+
+// SyncSnapshotIfChanged creates a snapshot only when the current config differs from the last version.
+// This is called after batch config updates to ensure version history is consistent.
+func (s *VersionService) SyncSnapshotIfChanged(ctx context.Context, appID, env, updatedBy string) (int, bool, error) {
+	configData, err := s.store.GetConfigMap(ctx, appID, env)
+	if err != nil {
+		return 0, false, err
+	}
+
+	currentHash := hash.MapHash(configData)
+
+	latestVersion, err := s.store.GetLatestVersionNumber(ctx, appID, env)
+	if err != nil {
+		return 0, false, err
+	}
+
+	// When latestVersion > 0, check if the config hash changed
+	if latestVersion > 0 {
+		latestData, err := s.store.GetVersion(ctx, appID, env, latestVersion)
+		if err != nil {
+			// The version index says there's a latest version, but GetVersion failed
+			// This indicates an inconsistent state between the index and actual data
+			s.logger.Errorf("version index inconsistency detected for %s/%s: index says %d but GetVersion failed: %v",
+				appID, env, latestVersion, err)
+			return 0, false, fmt.Errorf("version state inconsistent: %w", err)
+		}
+		if latestData.ConfigHash == currentHash {
+			return latestVersion, false, nil
+		}
+	}
+
+	// Config has changed, create a new version
+	summary := fmt.Sprintf("sync snapshot at %s", time.Now().Format(time.RFC3339))
+	newVer, err := s.CreateVersion(ctx, appID, env, updatedBy, summary)
 	if err != nil {
 		return 0, false, err
 	}

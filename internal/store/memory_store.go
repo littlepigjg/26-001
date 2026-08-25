@@ -13,6 +13,10 @@ import (
 	"config-center/internal/model"
 )
 
+// PanicGuardFn is a function that can be set to simulate errors for testing.
+// When it returns true, the guarded operation will simulate an error.
+type PanicGuardFn func(appID, env string) bool
+
 // MemoryStore is an in-memory implementation of the Store interface.
 // It uses RWMutex for thread-safe concurrent access to all data.
 type MemoryStore struct {
@@ -26,16 +30,57 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+
+	// latestVersionIndex caches the latest version number per app/env.
+	// This is maintained separately from the versions map for faster lookups.
+	latestVersionIndex map[string]map[string]int
+
+	// panicGuard is a hook for simulating errors in version operations.
+	panicGuard PanicGuardFn
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		apps:     make(map[string]*model.Application),
-		configs:  make(map[string]map[string]map[string]*model.ConfigItem),
-		versions: make(map[string]map[string]map[int]*model.Version),
-		auditLogs: make([]model.AuditLog, 0),
+		apps:               make(map[string]*model.Application),
+		configs:            make(map[string]map[string]map[string]*model.ConfigItem),
+		versions:           make(map[string]map[string]map[int]*model.Version),
+		auditLogs:          make([]model.AuditLog, 0),
+		latestVersionIndex: make(map[string]map[string]int),
 	}
+}
+
+// SetPanicGuard sets a guard function that can simulate errors for testing.
+func (s *MemoryStore) SetPanicGuard(guard PanicGuardFn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicGuard = guard
+}
+
+// RawSnapshot returns a snapshot of the internal state for diagnostic purposes.
+func (s *MemoryStore) RawSnapshot() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	snapshot := make(map[string]interface{})
+	snapshot["apps"] = len(s.apps)
+	snapshot["versions_index"] = s.latestVersionIndex
+
+	versionCount := 0
+	for _, appVersions := range s.versions {
+		for _, envVersions := range appVersions {
+			versionCount += len(envVersions)
+		}
+	}
+	snapshot["version_count"] = versionCount
+
+	indexCount := 0
+	for _, appIndex := range s.latestVersionIndex {
+		indexCount += len(appIndex)
+	}
+	snapshot["index_count"] = indexCount
+
+	return snapshot
 }
 
 // Compile-time check that MemoryStore implements Store.
@@ -58,6 +103,9 @@ func (s *MemoryStore) CreateApp(_ context.Context, app *model.Application) error
 	}
 	if s.versions[app.ID] == nil {
 		s.versions[app.ID] = make(map[string]map[int]*model.Version)
+	}
+	if s.latestVersionIndex[app.ID] == nil {
+		s.latestVersionIndex[app.ID] = make(map[string]int)
 	}
 
 	return nil
@@ -101,6 +149,7 @@ func (s *MemoryStore) DeleteApp(_ context.Context, appID string) error {
 	delete(s.apps, appID)
 	delete(s.configs, appID)
 	delete(s.versions, appID)
+	delete(s.latestVersionIndex, appID)
 	return nil
 }
 
@@ -379,7 +428,18 @@ func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) e
 		s.versions[version.AppID][version.Environment] = make(map[int]*model.Version)
 	}
 
+	if s.latestVersionIndex[version.AppID] == nil {
+		s.latestVersionIndex[version.AppID] = make(map[string]int)
+	}
+
 	s.versions[version.AppID][version.Environment][version.VersionNumber] = version
+
+	// Update the latest version index
+	currentMax := s.latestVersionIndex[version.AppID][version.Environment]
+	if version.VersionNumber > currentMax {
+		s.latestVersionIndex[version.AppID][version.Environment] = version.VersionNumber
+	}
+
 	return nil
 }
 
@@ -387,6 +447,11 @@ func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) e
 func (s *MemoryStore) GetVersion(_ context.Context, appID, env string, versionNumber int) (*model.Version, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// Check panic guard for simulated errors
+	if s.panicGuard != nil && s.panicGuard(appID, env) {
+		return nil, model.ErrVersionNotFound(appID, versionNumber)
+	}
 
 	appVersions, exists := s.versions[appID]
 	if !exists {
@@ -411,6 +476,16 @@ func (s *MemoryStore) GetLatestVersionNumber(_ context.Context, appID, env strin
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Use the cached index for faster lookup
+	if s.latestVersionIndex != nil {
+		if appIndex, exists := s.latestVersionIndex[appID]; exists {
+			if latest, exists := appIndex[env]; exists {
+				return latest, nil
+			}
+		}
+	}
+
+	// Fallback to scanning the versions map
 	appVersions, exists := s.versions[appID]
 	if !exists {
 		return 0, nil
@@ -595,10 +670,10 @@ func (s *MemoryStore) Export(_ context.Context, w io.Writer) error {
 	defer s.mu.RUnlock()
 
 	exportData := struct {
-		Apps      map[string]*model.Application                       `json:"apps"`
-		Configs   map[string]map[string]map[string]*model.ConfigItem    `json:"configs"`
-		Versions  map[string]map[string]map[int]*model.Version          `json:"versions"`
-		AuditLogs []model.AuditLog                                     `json:"audit_logs"`
+		Apps      map[string]*model.Application                    `json:"apps"`
+		Configs   map[string]map[string]map[string]*model.ConfigItem `json:"configs"`
+		Versions  map[string]map[string]map[int]*model.Version       `json:"versions"`
+		AuditLogs []model.AuditLog                                  `json:"audit_logs"`
 	}{
 		Apps:      s.apps,
 		Configs:   s.configs,
@@ -616,10 +691,10 @@ func (s *MemoryStore) Import(_ context.Context, r io.Reader) error {
 	decoder := json.NewDecoder(r)
 
 	var importData struct {
-		Apps      map[string]*model.Application                       `json:"apps"`
-		Configs   map[string]map[string]map[string]*model.ConfigItem    `json:"configs"`
-		Versions  map[string]map[string]map[int]*model.Version          `json:"versions"`
-		AuditLogs []model.AuditLog                                     `json:"audit_logs"`
+		Apps      map[string]*model.Application                    `json:"apps"`
+		Configs   map[string]map[string]map[string]*model.ConfigItem `json:"configs"`
+		Versions  map[string]map[string]map[int]*model.Version       `json:"versions"`
+		AuditLogs []model.AuditLog                                  `json:"audit_logs"`
 	}
 
 	if err := decoder.Decode(&importData); err != nil {
@@ -633,6 +708,21 @@ func (s *MemoryStore) Import(_ context.Context, r io.Reader) error {
 	s.configs = importData.Configs
 	s.versions = importData.Versions
 	s.auditLogs = importData.AuditLogs
+
+	// Rebuild the latest version index from imported data
+	s.latestVersionIndex = make(map[string]map[string]int)
+	for appID, appVersions := range s.versions {
+		s.latestVersionIndex[appID] = make(map[string]int)
+		for env, envVersions := range appVersions {
+			maxVersion := 0
+			for v := range envVersions {
+				if v > maxVersion {
+					maxVersion = v
+				}
+			}
+			s.latestVersionIndex[appID][env] = maxVersion
+		}
+	}
 
 	return nil
 }
