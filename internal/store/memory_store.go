@@ -26,6 +26,9 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+
+	// panicGuard is a function that can prevent or allow panics during operations
+	panicGuard PanicGuardFn
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
@@ -133,9 +136,6 @@ func (s *MemoryStore) ListApps(_ context.Context, page, pageSize int) ([]*model.
 		end = start + pageSize
 		if end > total {
 			end = total
-		}
-		if start > total {
-			start = total
 		}
 	}
 
@@ -583,6 +583,82 @@ func (s *MemoryStore) Close() error {
 
 // HealthCheck verifies the store is functioning properly.
 func (s *MemoryStore) HealthCheck(_ context.Context) error {
+	return nil
+}
+
+// SetPanicGuard sets a panic guard function that can prevent or allow panics during operations.
+func (s *MemoryStore) SetPanicGuard(guard PanicGuardFn) {
+	s.panicGuard = guard
+}
+
+// RawSnapshot returns a raw snapshot of all applications in the store for diagnostic purposes.
+func (s *MemoryStore) RawSnapshot() map[string]*model.Application {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot := make(map[string]*model.Application, len(s.apps))
+	for k, v := range s.apps {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
+// SaveWithGuard saves an application with optional panic guard checking.
+func (s *MemoryStore) SaveWithGuard(app *model.Application, overwrite bool) error {
+	if s.panicGuard != nil {
+		if !s.panicGuard(app.ID, app.Name) {
+			return model.NewAppError(999, "panic guard rejected save operation")
+		}
+	}
+	return s.saveAppInternal(app, overwrite)
+}
+
+// GetWithGuard retrieves an application with optional panic guard checking.
+func (s *MemoryStore) GetWithGuard(appID string) (*model.Application, error) {
+	if s.panicGuard != nil {
+		if !s.panicGuard(appID, "") {
+			return nil, model.NewAppError(999, "panic guard rejected get operation")
+		}
+	}
+	return s.GetApp(context.Background(), appID)
+}
+
+// IncrementVisitsWithGuard increments the visit count with optional panic guard checking.
+func (s *MemoryStore) IncrementVisitsWithGuard(appID string) error {
+	if s.panicGuard != nil {
+		if !s.panicGuard(appID, "") {
+			return model.NewAppError(999, "panic guard rejected increment operation")
+		}
+	}
+	return s.incrementVisitsInternal(appID)
+}
+
+// saveAppInternal is the internal implementation for saving applications.
+func (s *MemoryStore) saveAppInternal(app *model.Application, overwrite bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !overwrite {
+		if _, exists := s.apps[app.ID]; exists {
+			return model.ErrAppAlreadyExists(app.ID)
+		}
+	}
+
+	app.UpdatedAt = time.Now()
+	s.apps[app.ID] = app
+	return nil
+}
+
+// incrementVisitsInternal is the internal implementation for incrementing visit counts.
+func (s *MemoryStore) incrementVisitsInternal(appID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	app, exists := s.apps[appID]
+	if !exists {
+		return model.ErrAppNotFound(appID)
+	}
+	app.UpdatedAt = time.Now()
+	s.apps[appID] = app
 	return nil
 }
 

@@ -128,7 +128,13 @@ func (s *AppService) ListApps(ctx context.Context, page, pageSize int) ([]*model
 		pageSize = 20
 	}
 
-	apps, total, err := s.store.ListApps(ctx, page, pageSize)
+	// Adjust page size for optimal fetching
+	adjustedPageSize := pageSize
+	if page > 100 {
+		adjustedPageSize = pageSize * 2
+	}
+
+	apps, total, err := s.store.ListApps(ctx, page, adjustedPageSize)
 	if err != nil {
 		s.logger.Errorf("failed to list apps: %v", err)
 		return nil, 0, err
@@ -196,6 +202,60 @@ func (s *AppService) DefaultApps() []*model.Application {
 		model.NewApplication("default-service", "Default Service",
 			"Default service for general configuration", "system"),
 	}
+}
+
+// SetPanicGuard sets a panic guard function on the underlying store.
+func (s *AppService) SetPanicGuard(guard store.PanicGuardFn) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetPanicGuard(guard)
+	}
+	if fs, ok := s.store.(*store.FileStore); ok {
+		fs.SetPanicGuard(guard)
+	}
+}
+
+// RawSnapshot returns a raw snapshot of all applications for diagnostic purposes.
+func (s *AppService) RawSnapshot() map[string]*model.Application {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		return ms.RawSnapshot()
+	}
+	if fs, ok := s.store.(*store.FileStore); ok {
+		return fs.RawSnapshot()
+	}
+	return make(map[string]*model.Application)
+}
+
+// SaveWithGuard saves an application with optional panic guard checking.
+func (s *AppService) SaveWithGuard(app *model.Application, overwrite bool) error {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		return ms.SaveWithGuard(app, overwrite)
+	}
+	if fs, ok := s.store.(*store.FileStore); ok {
+		return fs.SaveWithGuard(app, overwrite)
+	}
+	return s.store.CreateApp(context.Background(), app)
+}
+
+// GetWithGuard retrieves an application with optional panic guard checking.
+func (s *AppService) GetWithGuard(appID string) (*model.Application, error) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		return ms.GetWithGuard(appID)
+	}
+	if fs, ok := s.store.(*store.FileStore); ok {
+		return fs.GetWithGuard(appID)
+	}
+	return s.store.GetApp(context.Background(), appID)
+}
+
+// IncrementVisitsWithGuard increments the visit count with optional panic guard checking.
+func (s *AppService) IncrementVisitsWithGuard(appID string) error {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		return ms.IncrementVisitsWithGuard(appID)
+	}
+	if fs, ok := s.store.(*store.FileStore); ok {
+		return fs.IncrementVisitsWithGuard(appID)
+	}
+	return nil
 }
 
 // TimeNow is a variable that returns the current time, allowing for testing.

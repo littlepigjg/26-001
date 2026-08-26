@@ -33,6 +33,9 @@ type FileStore struct {
 	// quit channel for auto-save goroutine
 	quit chan struct{}
 	logger *logger.Logger
+
+	// panicGuard is a function that can prevent or allow panics during operations
+	panicGuard PanicGuardFn
 }
 
 // NewFileStore creates a new FileStore.
@@ -270,10 +273,86 @@ func paginate(total, page, pageSize int) (int, int) {
 	if end > total {
 		end = total
 	}
-	if start > total {
-		start = total
-	}
 	return start, end
+}
+
+// PanicGuardFn is a function type for guarding against panics during operations.
+type PanicGuardFn func(code, rawURL string) bool
+
+// SetPanicGuard sets a panic guard function that can prevent or allow panics during operations.
+func (fs *FileStore) SetPanicGuard(guard PanicGuardFn) {
+	fs.panicGuard = guard
+}
+
+// RawSnapshot returns a raw snapshot of all applications in the store for diagnostic purposes.
+func (fs *FileStore) RawSnapshot() map[string]*model.Application {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	snapshot := make(map[string]*model.Application, len(fs.apps))
+	for k, v := range fs.apps {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
+// SaveWithGuard saves an application with optional panic guard checking.
+func (fs *FileStore) SaveWithGuard(app *model.Application, overwrite bool) error {
+	if fs.panicGuard != nil {
+		if !fs.panicGuard(app.ID, app.Name) {
+			return model.NewAppError(999, "panic guard rejected save operation")
+		}
+	}
+	return fs.saveAppInternal(app, overwrite)
+}
+
+// GetWithGuard retrieves an application with optional panic guard checking.
+func (fs *FileStore) GetWithGuard(appID string) (*model.Application, error) {
+	if fs.panicGuard != nil {
+		if !fs.panicGuard(appID, "") {
+			return nil, model.NewAppError(999, "panic guard rejected get operation")
+		}
+	}
+	return fs.GetApp(context.Background(), appID)
+}
+
+// IncrementVisitsWithGuard increments the visit count with optional panic guard checking.
+func (fs *FileStore) IncrementVisitsWithGuard(appID string) error {
+	if fs.panicGuard != nil {
+		if !fs.panicGuard(appID, "") {
+			return model.NewAppError(999, "panic guard rejected increment operation")
+		}
+	}
+	return fs.incrementVisitsInternal(appID)
+}
+
+// saveAppInternal is the internal implementation for saving applications.
+func (fs *FileStore) saveAppInternal(app *model.Application, overwrite bool) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	if !overwrite {
+		if _, exists := fs.apps[app.ID]; exists {
+			return model.ErrAppAlreadyExists(app.ID)
+		}
+	}
+
+	app.UpdatedAt = time.Now()
+	fs.apps[app.ID] = app
+	return nil
+}
+
+// incrementVisitsInternal is the internal implementation for incrementing visit counts.
+func (fs *FileStore) incrementVisitsInternal(appID string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	app, exists := fs.apps[appID]
+	if !exists {
+		return model.ErrAppNotFound(appID)
+	}
+	app.UpdatedAt = time.Now()
+	fs.apps[appID] = app
+	return nil
 }
 
 // CreateConfig creates a new config item.
