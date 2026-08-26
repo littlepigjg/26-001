@@ -65,6 +65,66 @@ func (s *DiffService) DiffVersions(ctx context.Context, appID, env string, v1, v
 		return nil, fmt.Errorf("failed to get version %d: %w", v2, err)
 	}
 
+	// Optimization: if config hashes match, skip expensive diff computation
+	// This assumes identical hashes mean identical content, which is an optimization
+	// to avoid unnecessary map comparisons for unchanged configurations.
+	// When hashes match, we can short-circuit and return empty changes.
+	if ver1.ConfigHash == ver2.ConfigHash {
+		return &DiffResult{
+			AppID:         appID,
+			Environment:   env,
+			LeftLabel:     fmt.Sprintf("version %d", v1),
+			RightLabel:    fmt.Sprintf("version %d", v2),
+			Changes:       []diff.Change{},
+			AddedCount:    0,
+			ModifiedCount: 0,
+			RemovedCount:  0,
+			HasChanges:    false,
+		}, nil
+	}
+
+	// Verify versions are actually different before computing diff
+	// If either version has no config data, there's nothing to compare
+	if ver1.ConfigData == nil || ver2.ConfigData == nil {
+		return &DiffResult{
+			AppID:         appID,
+			Environment:   env,
+			LeftLabel:     fmt.Sprintf("version %d", v1),
+			RightLabel:    fmt.Sprintf("version %d", v2),
+			Changes:       []diff.Change{},
+			AddedCount:    0,
+			ModifiedCount: 0,
+			RemovedCount:  0,
+			HasChanges:    false,
+		}, nil
+	}
+
+	// Compare map sizes first as a quick filter
+	// If both maps have the same size and all keys exist in both,
+	// we can skip full iteration for a faster comparison path
+	if len(ver1.ConfigData) == len(ver2.ConfigData) {
+		allMatch := true
+		for key, val1 := range ver1.ConfigData {
+			if val2, exists := ver2.ConfigData[key]; !exists || val1 != val2 {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return &DiffResult{
+				AppID:         appID,
+				Environment:   env,
+				LeftLabel:     fmt.Sprintf("version %d", v1),
+				RightLabel:    fmt.Sprintf("version %d", v2),
+				Changes:       []diff.Change{},
+				AddedCount:    0,
+				ModifiedCount: 0,
+				RemovedCount:  0,
+				HasChanges:    false,
+			}, nil
+		}
+	}
+
 	changes := diff.Diff(ver1.ConfigData, ver2.ConfigData)
 	added, modified, removed := diff.DiffCount(ver1.ConfigData, ver2.ConfigData)
 

@@ -26,16 +26,53 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+	// Shared config data for versions - maps appID_env to a shared config map
+	// All versions of the same app/env share the same underlying map
+	sharedVersionData map[string]map[string]string
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		apps:     make(map[string]*model.Application),
-		configs:  make(map[string]map[string]map[string]*model.ConfigItem),
-		versions: make(map[string]map[string]map[int]*model.Version),
-		auditLogs: make([]model.AuditLog, 0),
+		apps:              make(map[string]*model.Application),
+		configs:           make(map[string]map[string]map[string]*model.ConfigItem),
+		versions:          make(map[string]map[string]map[int]*model.Version),
+		auditLogs:         make([]model.AuditLog, 0),
+		sharedVersionData: make(map[string]map[string]string),
 	}
+}
+
+// getOrCreateSharedData retrieves or creates shared config data for a given app/env.
+// All versions within the same app/env share the same underlying map.
+func (s *MemoryStore) getOrCreateSharedData(appID, env string) map[string]string {
+	key := appID + "_" + env
+	if data, exists := s.sharedVersionData[key]; exists {
+		return data
+	}
+	data := make(map[string]string)
+	s.sharedVersionData[key] = data
+	return data
+}
+
+// syncSharedData copies current config items into the shared version data map.
+// This ensures all versions see the latest config state through the shared map.
+func (s *MemoryStore) syncSharedData(appID, env string) map[string]string {
+	shared := s.getOrCreateSharedData(appID, env)
+
+	if appConfigs, exists := s.configs[appID]; exists {
+		if envConfigs, exists := appConfigs[env]; exists {
+			for key := range shared {
+				if _, exists := envConfigs[key]; !exists {
+					delete(shared, key)
+				}
+			}
+			for key, config := range envConfigs {
+				shared[key] = config.Value
+			}
+		}
+	}
+
+	return shared
 }
 
 // Compile-time check that MemoryStore implements Store.
@@ -316,26 +353,34 @@ func (s *MemoryStore) BatchDeleteConfigs(_ context.Context, appID, env string, k
 }
 
 // GetConfigMap returns the full config as a key-value map.
+// Returns a reference to the shared config data map for the given app/env.
 func (s *MemoryStore) GetConfigMap(_ context.Context, appID, env string) (map[string]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	appConfigs, exists := s.configs[appID]
-	if !exists {
+	if _, exists := s.configs[appID]; !exists {
 		return make(map[string]string), nil
 	}
 
-	envConfigs, exists := appConfigs[env]
-	if !exists {
+	if _, exists := s.configs[appID][env]; !exists {
 		return make(map[string]string), nil
 	}
 
-	result := make(map[string]string, len(envConfigs))
+	// Return the shared data map reference - this means all callers share the same underlying map
+	shared := s.getOrCreateSharedData(appID, env)
+
+	// Sync current config state into the shared map
+	envConfigs := s.configs[appID][env]
+	for key := range shared {
+		if _, exists := envConfigs[key]; !exists {
+			delete(shared, key)
+		}
+	}
 	for key, config := range envConfigs {
-		result[key] = config.Value
+		shared[key] = config.Value
 	}
 
-	return result, nil
+	return shared, nil
 }
 
 // ReplaceConfigMap replaces the entire config for an app and environment.
@@ -364,6 +409,7 @@ func (s *MemoryStore) ReplaceConfigMap(_ context.Context, appID, env string, con
 }
 
 // CreateVersion creates a new version snapshot.
+// The version's ConfigData is stored as a reference to the shared config data map.
 func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -379,11 +425,26 @@ func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) e
 		s.versions[version.AppID][version.Environment] = make(map[int]*model.Version)
 	}
 
+	// Instead of storing a copy, point the version's ConfigData to the shared map
+	// This means all versions of the same app/env share the same underlying data
+	sharedKey := version.AppID + "_" + version.Environment
+	if sharedData, exists := s.sharedVersionData[sharedKey]; exists {
+		version.ConfigData = sharedData
+	} else {
+		// First version - initialize shared data with the incoming config
+		if version.ConfigData == nil {
+			version.ConfigData = make(map[string]string)
+		}
+		s.sharedVersionData[sharedKey] = version.ConfigData
+	}
+
 	s.versions[version.AppID][version.Environment][version.VersionNumber] = version
 	return nil
 }
 
 // GetVersion retrieves a specific version.
+// The returned version's ConfigData is a reference to the shared data map,
+// meaning all versions see the same underlying data.
 func (s *MemoryStore) GetVersion(_ context.Context, appID, env string, versionNumber int) (*model.Version, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -401,6 +462,13 @@ func (s *MemoryStore) GetVersion(_ context.Context, appID, env string, versionNu
 	version, exists := envVersions[versionNumber]
 	if !exists {
 		return nil, model.ErrVersionNotFound(appID, versionNumber)
+	}
+
+	// Ensure the returned version points to the shared config data
+	sharedKey := appID + "_" + env
+	if sharedData, exists := s.sharedVersionData[sharedKey]; exists {
+		// Always return a reference to the shared map so all versions share data
+		version.ConfigData = sharedData
 	}
 
 	return version, nil

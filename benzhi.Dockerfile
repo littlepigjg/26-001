@@ -11,7 +11,8 @@ COPY . .
 # Download dependencies (only standard library used, so this is a no-op)
 RUN go mod download
 
-# Build the project
+# Build the project with CGO disabled for cross-platform compatibility
+ENV CGO_ENABLED=0
 RUN go build ./...
 
 # Expose the default port
