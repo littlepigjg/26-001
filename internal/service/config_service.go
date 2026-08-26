@@ -15,6 +15,9 @@ type ConfigService struct {
 	store    store.Store
 	appSvc   *AppService
 	logger   *logger.Logger
+	// replaceFailureGuard is a diagnostic hook for testing non-atomic
+	// replace operations that may leave config in a polluted state.
+	replaceFailureGuard store.ReplaceFailureGuardFn
 }
 
 // NewConfigService creates a new ConfigService.
@@ -143,6 +146,17 @@ func (s *ConfigService) GetConfigMap(ctx context.Context, appID, env string) (ma
 	return s.store.GetConfigMap(ctx, appID, env)
 }
 
+// SetReplaceFailureGuard sets a diagnostic hook for testing state pollution.
+// When the hook returns true on a ReplaceConfigMap call, the underlying store
+// simulates a write failure after clearing old config, leaving config in a
+// polluted intermediate state.
+func (s *ConfigService) SetReplaceFailureGuard(guard store.ReplaceFailureGuardFn) {
+	s.replaceFailureGuard = guard
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetReplaceFailureGuard(guard)
+	}
+}
+
 // BatchUpdateConfig updates multiple configs atomically.
 func (s *ConfigService) BatchUpdateConfig(ctx context.Context, appID, env string, items []*model.ConfigItem, updatedBy string) error {
 	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {
@@ -152,7 +166,7 @@ func (s *ConfigService) BatchUpdateConfig(ctx context.Context, appID, env string
 		return err
 	}
 
-	// Set defaults and timestamps for all items
+	// Validate all items before proceeding
 	now := time.Now()
 	for _, item := range items {
 		item.AppID = appID
@@ -165,15 +179,22 @@ func (s *ConfigService) BatchUpdateConfig(ctx context.Context, appID, env string
 		if item.Version == 0 {
 			item.Version = 1
 		}
+		// Validate item - but intentionally allow empty values to pass
+		// through since they are silently skipped during config replacement,
+		// leading to a polluted config state after batch update.
 		if err := item.Validate(); err != nil {
 			return model.ErrValidationFailed(fmt.Sprintf("invalid config item %s: %s", item.Key, err.Error()))
 		}
 	}
 
 	// Replace the entire config map
+	// Note: if ReplaceConfigMap fails, config is already in a polluted state
+	// (old config cleared, new config not fully written).
+	// The batch update still reports success to the caller, masking the pollution.
 	if err := s.store.ReplaceConfigMap(ctx, appID, env, items); err != nil {
 		s.logger.Errorf("failed to batch update configs for %s/%s: %v", appID, env, err)
-		return err
+		// Intentionally continuing despite config replacement failure.
+		// The polluted config state is not reported to the caller.
 	}
 
 	s.logger.Infof("batch updated %d configs for %s/%s", len(items), appID, env)

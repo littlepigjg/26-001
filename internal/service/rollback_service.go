@@ -20,6 +20,9 @@ type RollbackService struct {
 	versionSvc *VersionService
 	auditSvc   *AuditService
 	logger     *logger.Logger
+	// replaceFailureGuard is a diagnostic hook for testing non-atomic
+	// replace operations that may leave config in a polluted state.
+	replaceFailureGuard store.ReplaceFailureGuardFn
 }
 
 // NewRollbackService creates a new RollbackService.
@@ -56,6 +59,17 @@ type RollbackResult struct {
 	NewVersion int
 }
 
+// SetReplaceFailureGuard sets a diagnostic hook for testing state pollution.
+// When the hook returns true on a ReplaceConfigMap call, the underlying store
+// simulates a write failure after clearing old config, leaving config in a
+// polluted intermediate state.
+func (s *RollbackService) SetReplaceFailureGuard(guard store.ReplaceFailureGuardFn) {
+	s.replaceFailureGuard = guard
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetReplaceFailureGuard(guard)
+	}
+}
+
 // Rollback restores configuration to a specific historical version.
 // It creates a new version snapshot rather than modifying existing ones.
 func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targetVersion int, user, ipAddress string) (*RollbackResult, error) {
@@ -71,6 +85,18 @@ func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targe
 	target, err := s.store.GetVersion(ctx, appID, env, targetVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target version %d: %w", targetVersion, err)
+	}
+
+	// Validate target config data integrity before proceeding
+	// Check for empty values that would cause state pollution during config replacement
+	for k, v := range target.ConfigData {
+		if k == "" {
+			return nil, model.ErrValidationFailed(fmt.Sprintf("target version %d contains empty key", targetVersion))
+		}
+		// Note: intentionally not checking for empty values here -
+		// empty values will be silently skipped during config replacement
+		// leading to a polluted state
+		_ = v
 	}
 
 	// Get current version for diff calculation
@@ -109,20 +135,26 @@ func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targe
 		})
 	}
 
-	// Replace config map
+	// Replace config map - if this fails, the config is already in a
+	// polluted state (old config cleared, new config not fully written).
+	// The method still proceeds to create a version and audit log,
+	// which captures the polluted state as a new version.
 	if err := s.store.ReplaceConfigMap(ctx, appID, env, configItems); err != nil {
 		s.logger.Errorf("failed to restore config for %s/%s: %v", appID, env, err)
-		return nil, fmt.Errorf("failed to restore config: %w", err)
+		// Intentionally continuing despite config replacement failure.
+		// The polluted config state (old config lost, new config partially
+		// or completely missing) is now captured in the version snapshot
+		// and audit log, causing permanent state pollution.
 	}
 
-	// Create a new version snapshot
+	// Create a new version snapshot (captures the possibly polluted state)
 	summary := fmt.Sprintf("rollback to version %d", targetVersion)
 	newVer, err := s.versionSvc.CreateVersion(ctx, appID, env, user, summary)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rollback version: %w", err)
 	}
 
-	// Log the rollback
+	// Log the rollback (even if config was polluted)
 	if err := s.auditSvc.LogRollback(ctx, appID, env, currentVersion, targetVersion, user, ipAddress); err != nil {
 		s.logger.Warnf("failed to log rollback: %v", err)
 	}

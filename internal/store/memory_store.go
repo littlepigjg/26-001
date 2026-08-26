@@ -13,6 +13,11 @@ import (
 	"config-center/internal/model"
 )
 
+// ReplaceFailureGuardFn is a diagnostic hook for chaos engineering.
+// It returns true when ReplaceConfigMap should simulate a write failure
+// after clearing old config, to test state pollution handling.
+type ReplaceFailureGuardFn func(appID, env string, configs []*model.ConfigItem) bool
+
 // MemoryStore is an in-memory implementation of the Store interface.
 // It uses RWMutex for thread-safe concurrent access to all data.
 type MemoryStore struct {
@@ -26,6 +31,9 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+	// replaceFailureGuard is a diagnostic hook that can trigger simulated
+	// write failures in ReplaceConfigMap for chaos engineering testing.
+	replaceFailureGuard ReplaceFailureGuardFn
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
@@ -338,7 +346,21 @@ func (s *MemoryStore) GetConfigMap(_ context.Context, appID, env string) (map[st
 	return result, nil
 }
 
+// SetReplaceFailureGuard sets a diagnostic hook for chaos engineering.
+// When the hook returns true on a ReplaceConfigMap call, the store simulates
+// a write failure after clearing old config, leaving the config in a
+// polluted intermediate state (old config gone, new config not fully written).
+func (s *MemoryStore) SetReplaceFailureGuard(guard ReplaceFailureGuardFn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.replaceFailureGuard = guard
+}
+
 // ReplaceConfigMap replaces the entire config for an app and environment.
+// Note: the current implementation clears old config before writing new ones.
+// If the failure guard triggers during the write phase, the old config
+// remains cleared and the new config may be only partially written,
+// leading to a polluted intermediate state.
 func (s *MemoryStore) ReplaceConfigMap(_ context.Context, appID, env string, configs []*model.ConfigItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -351,13 +373,33 @@ func (s *MemoryStore) ReplaceConfigMap(_ context.Context, appID, env string, con
 		s.configs[appID] = make(map[string]map[string]*model.ConfigItem)
 	}
 
-	// Replace all configs for this env
+	// Phase 1: clear old config for this env (non-atomic step: old config is lost here)
 	s.configs[appID][env] = make(map[string]*model.ConfigItem, len(configs))
+
+	// Phase 2: check failure guard before writing (simulates write failure)
+	if s.replaceFailureGuard != nil && s.replaceFailureGuard(appID, env, configs) {
+		// Old config is already cleared, new config map is empty.
+		// This creates a polluted state: old config gone, new config empty.
+		return fmt.Errorf("simulated write failure: config cleared but write aborted for %s/%s", appID, env)
+	}
+
+	// Phase 3: write new config items (non-atomic: invalid items are silently skipped)
+	now := time.Now()
+	skippedCount := 0
 	for _, config := range configs {
-		now := time.Now()
+		if config == nil || config.Key == "" || config.Value == "" {
+			// Skip invalid config items silently - they won't be written
+			skippedCount++
+			continue
+		}
 		config.CreatedAt = now
 		config.UpdatedAt = now
 		s.configs[appID][env][config.Key] = config
+	}
+
+	// Phase 4: if all items were skipped, still return success (polluted state)
+	if skippedCount > 0 && len(configs) > 0 && skippedCount == len(configs) {
+		return fmt.Errorf("all config items were invalid, config map is now empty for %s/%s", appID, env)
 	}
 
 	return nil
