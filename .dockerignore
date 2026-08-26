@@ -1,0 +1,47 @@
+# Docker ignore file
+# Exclude unnecessary files from Docker builds
+
+# Git
+.git
+.gitignore
+
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+config-center
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed in container)
+BUG_CATALOG.md
+BENZHI_README.md
+
+# Docker files (not needed inside the container)
+benzhi.Dockerfile
+build_benzhi_docker.sh
+.dockerignore
+
+# Test data
+testdata/
+
+# Test files (not needed in container)
+red_green_test.go
+验收.txt
+提示词2_缺陷注入.txt
+提示词3_Docker缺陷验证.txt
+branch.sh
+commit.sh
