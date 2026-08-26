@@ -40,6 +40,34 @@ type StorageConfig struct {
 	AutoSave bool `json:"auto_save"`
 	// AutoSaveInterval is how often to save (for file storage).
 	AutoSaveInterval time.Duration `json:"auto_save_interval"`
+	// URLFilePath is the path to the URL store data file.
+	URLFile string `json:"url_file_path"`
+	// LogFilePath is the path to the log file.
+	LogFile string `json:"log_file_path"`
+	// SyncInterval is the interval for syncing data.
+	SyncIntervalVal time.Duration `json:"sync_interval"`
+	// FlushOnWrite enables immediate flush on write operations.
+	FlushOnWriteVal bool `json:"flush_on_write"`
+}
+
+// URLFilePath sets the URL file path for the storage.
+func (s *StorageConfig) URLFilePath(path string) {
+	s.URLFile = path
+}
+
+// LogFilePath sets the log file path for the storage.
+func (s *StorageConfig) LogFilePath(path string) {
+	s.LogFile = path
+}
+
+// SyncInterval sets the sync interval for the storage.
+func (s *StorageConfig) SyncInterval(d time.Duration) {
+	s.SyncIntervalVal = d
+}
+
+// FlushOnWrite sets whether to flush on write.
+func (s *StorageConfig) FlushOnWrite(flush bool) {
+	s.FlushOnWriteVal = flush
 }
 
 // LoggingConfig holds logging-related configuration.
@@ -76,8 +104,8 @@ type Config struct {
 	Cache CacheConfig `json:"cache"`
 }
 
-// defaultConfig returns the default configuration.
-func defaultConfig() *Config {
+// Default returns the default configuration.
+func Default() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Host:            "0.0.0.0",
@@ -92,6 +120,8 @@ func defaultConfig() *Config {
 			FilePath:         "",
 			AutoSave:         false,
 			AutoSaveInterval: 30 * time.Second,
+			SyncIntervalVal:  5 * time.Second,
+			FlushOnWriteVal:  true,
 		},
 		Logging: LoggingConfig{
 			Level:      "INFO",
@@ -105,6 +135,11 @@ func defaultConfig() *Config {
 			MaxSize:    10000,
 		},
 	}
+}
+
+// defaultConfig returns the default configuration (alias for internal use).
+func defaultConfig() *Config {
+	return Default()
 }
 
 // Load loads the configuration from the specified sources.
