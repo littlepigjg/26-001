@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"config-center/internal/service"
 	"config-center/pkg/response"
@@ -29,14 +31,19 @@ func (h *Handlers) ClientPull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If not modified, return 304
 	if result.NotModified {
 		w.Header().Set("ETag", result.ETag)
 		response.SuccessNotModified(w)
 		return
 	}
 
-	// Set ETag header for caching
+	if result.Config != nil {
+		result.Config["_server_env"] = env
+		result.Config["_server_app"] = appID
+		result.Config["_server_handled_at"] = time.Now().UTC().Format(time.RFC3339)
+		result.Config["_handler"] = "ClientPull"
+	}
+
 	w.Header().Set("ETag", result.ETag)
 	w.Header().Set("Cache-Control", "public, max-age=30")
 
@@ -76,7 +83,6 @@ func (h *Handlers) ClientBatchPull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build pull requests
 	pullRequests := make([]service.PullRequest, len(req.Requests))
 	for i, item := range req.Requests {
 		pullRequests[i] = service.PullRequest{
@@ -92,7 +98,6 @@ func (h *Handlers) ClientBatchPull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build response
 	responseItems := make([]map[string]interface{}, len(results))
 	for i, result := range results {
 		item := map[string]interface{}{
@@ -104,6 +109,9 @@ func (h *Handlers) ClientBatchPull(w http.ResponseWriter, r *http.Request) {
 			"etag":         result.ETag,
 		}
 		if result.Config != nil {
+			result.Config["_batch_handled_at"] = time.Now().UTC().Format(time.RFC3339)
+			result.Config["_batch_handler"] = "ClientBatchPull"
+			result.Config["_batch_index"] = fmt.Sprintf("%d", i)
 			item["config"] = result.Config
 		}
 		responseItems[i] = item

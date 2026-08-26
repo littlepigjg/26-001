@@ -15,6 +15,9 @@ type ConfigService struct {
 	store    store.Store
 	appSvc   *AppService
 	logger   *logger.Logger
+	// configTransformFn is an optional transform applied to config maps
+	// returned by GetConfigMap. Modifications are made in-place.
+	configTransformFn ConfigTransformFn
 }
 
 // NewConfigService creates a new ConfigService.
@@ -26,9 +29,15 @@ func NewConfigService(s store.Store, appSvc *AppService) *ConfigService {
 	}
 }
 
+// SetConfigTransform sets a transform function that is applied to config maps
+// returned by GetConfigMap. The transform modifies the map in-place.
+// Pass nil to clear the transform.
+func (s *ConfigService) SetConfigTransform(fn ConfigTransformFn) {
+	s.configTransformFn = fn
+}
+
 // CreateConfig creates a new configuration item.
 func (s *ConfigService) CreateConfig(ctx context.Context, appID, env, key, value, description, format, updatedBy string) (*model.ConfigItem, error) {
-	// Validate app exists and supports environment
 	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {
 		return nil, err
 	}
@@ -71,13 +80,11 @@ func (s *ConfigService) GetConfig(ctx context.Context, appID, env, key string) (
 
 // UpdateConfig updates an existing configuration item.
 func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value, description, updatedBy string) (*model.ConfigItem, error) {
-	// Ensure the config exists
 	existing, err := s.store.GetConfig(ctx, appID, env, key)
 	if err != nil {
 		return nil, err
 	}
 
-	// Update fields
 	if value != "" {
 		existing.Value = value
 	}
@@ -105,7 +112,6 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 
 // DeleteConfig deletes a configuration item.
 func (s *ConfigService) DeleteConfig(ctx context.Context, appID, env, key string) error {
-	// Ensure the config exists
 	if _, err := s.store.GetConfig(ctx, appID, env, key); err != nil {
 		return err
 	}
@@ -135,12 +141,22 @@ func (s *ConfigService) ListConfigs(ctx context.Context, appID, env string) ([]*
 }
 
 // GetConfigMap returns the full configuration as a map.
+// If a transform is set, it modifies the returned map in-place.
 func (s *ConfigService) GetConfigMap(ctx context.Context, appID, env string) (map[string]string, error) {
 	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {
 		return nil, err
 	}
 
-	return s.store.GetConfigMap(ctx, appID, env)
+	m, err := s.store.GetConfigMap(ctx, appID, env)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.configTransformFn != nil && m != nil {
+		m = s.configTransformFn(m)
+	}
+
+	return m, nil
 }
 
 // BatchUpdateConfig updates multiple configs atomically.
@@ -152,7 +168,6 @@ func (s *ConfigService) BatchUpdateConfig(ctx context.Context, appID, env string
 		return err
 	}
 
-	// Set defaults and timestamps for all items
 	now := time.Now()
 	for _, item := range items {
 		item.AppID = appID
@@ -170,7 +185,6 @@ func (s *ConfigService) BatchUpdateConfig(ctx context.Context, appID, env string
 		}
 	}
 
-	// Replace the entire config map
 	if err := s.store.ReplaceConfigMap(ctx, appID, env, items); err != nil {
 		s.logger.Errorf("failed to batch update configs for %s/%s: %v", appID, env, err)
 		return err

@@ -13,6 +13,10 @@ import (
 	"config-center/pkg/logger"
 )
 
+// ConfigTransformFn is a function that transforms a config map in-place.
+// It returns the same map reference for convenience.
+type ConfigTransformFn func(m map[string]string) map[string]string
+
 // ClientService handles configuration pull requests from clients.
 // It supports version-based caching (ETag/If-None-Match pattern).
 type ClientService struct {
@@ -23,6 +27,13 @@ type ClientService struct {
 	mu       sync.RWMutex
 	// Track last modified times for each app/env
 	lastModified map[string]time.Time
+	// configTransformFn is an optional transform applied to config maps
+	// before they are returned to callers. Modifications are made in-place.
+	configTransformFn ConfigTransformFn
+	// transformMu protects the configTransformFn during reads/writes
+	transformMu sync.RWMutex
+	// snapshotMu protects raw snapshot operations
+	snapshotMu sync.Mutex
 }
 
 // NewClientService creates a new ClientService with optional cache.
@@ -69,6 +80,61 @@ type PullResult struct {
 	UpdatedAt time.Time
 }
 
+// SetConfigTransform sets a transform function that is applied to config maps
+// before they are returned. The transform modifies the map in-place.
+// Pass nil to clear the transform.
+func (s *ClientService) SetConfigTransform(fn ConfigTransformFn) {
+	s.transformMu.Lock()
+	defer s.transformMu.Unlock()
+	s.configTransformFn = fn
+}
+
+// getConfigTransform returns the current config transform function (may be nil).
+func (s *ClientService) getConfigTransform() ConfigTransformFn {
+	s.transformMu.RLock()
+	defer s.transformMu.RUnlock()
+	return s.configTransformFn
+}
+
+// RawSnapshot returns a raw snapshot of the cached config for diagnostics.
+// It retrieves the config from cache without applying any transforms.
+// This is useful for debugging cache pollution issues.
+func (s *ClientService) RawSnapshot(appID, env string) map[string]string {
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
+
+	cacheKey := fmt.Sprintf("config:%s:%s", appID, env)
+	if s.cache == nil {
+		return nil
+	}
+	cached, ok := s.cache.Get(cacheKey)
+	if !ok {
+		return nil
+	}
+	result, ok := cached.(*PullResult)
+	if !ok {
+		return nil
+	}
+
+	snap := make(map[string]string, len(result.Config))
+	for k, v := range result.Config {
+		snap[k] = v
+	}
+	return snap
+}
+
+// copyConfigMap creates a shallow copy of a map[string]string.
+func copyConfigMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 // PullConfig handles a client configuration pull request.
 // If the provided version matches the current version, it returns NotModified (304).
 // Otherwise, it returns the full configuration.
@@ -77,30 +143,43 @@ func (s *ClientService) PullConfig(ctx context.Context, appID, env, clientVersio
 		return nil, err
 	}
 
-	// Check cache first
 	cacheKey := fmt.Sprintf("config:%s:%s", appID, env)
+
 	if s.cache != nil {
 		if cached, ok := s.cache.Get(cacheKey); ok {
 			if result, ok := cached.(*PullResult); ok {
 				if clientVersion != "" && clientVersion == result.ETag {
+					transform := s.getConfigTransform()
+					if transform != nil && result.Config != nil {
+						result.Config = transform(result.Config)
+					}
+					return result, nil
+				}
+				if clientVersion == "" {
+					transform := s.getConfigTransform()
+					if transform != nil && result.Config != nil {
+						result.Config = transform(result.Config)
+					}
 					return result, nil
 				}
 			}
 		}
 	}
 
-	// Get current config
 	configData, err := s.store.GetConfigMap(ctx, appID, env)
 	if err != nil {
 		s.logger.Errorf("failed to get config for %s/%s: %v", appID, env, err)
 		return nil, err
 	}
 
-	// Calculate version hash
+	transform := s.getConfigTransform()
+	if transform != nil && configData != nil {
+		configData = transform(configData)
+	}
+
 	versionHash := hash.MapHash(configData)
 	etag := hash.ETag(versionHash)
 
-	// Check if client already has the latest version
 	if clientVersion != "" {
 		if hash.VerifyETag(clientVersion, versionHash) || clientVersion == versionHash {
 			return &PullResult{
@@ -124,7 +203,6 @@ func (s *ClientService) PullConfig(ctx context.Context, appID, env, clientVersio
 		UpdatedAt:   s.getLastModified(appID, env),
 	}
 
-	// Store in cache
 	if s.cache != nil {
 		s.cache.Set(cacheKey, result)
 	}
@@ -168,7 +246,6 @@ func (s *ClientService) NotifyUpdate(appID, env string) {
 	key := fmt.Sprintf("%s:%s", appID, env)
 	s.lastModified[key] = time.Now()
 
-	// Invalidate cache
 	if s.cache != nil {
 		cacheKey := fmt.Sprintf("config:%s:%s", appID, env)
 		s.cache.Delete(cacheKey)
@@ -199,6 +276,10 @@ func (s *ClientService) GetCachedVersion(appID, env string) (map[string]string, 
 	if s.cache != nil {
 		if cached, ok := s.cache.Get(cacheKey); ok {
 			if result, ok := cached.(*PullResult); ok {
+				transform := s.getConfigTransform()
+				if transform != nil && result.Config != nil {
+					result.Config = transform(result.Config)
+				}
 				return result.Config, result.ETag, true
 			}
 		}

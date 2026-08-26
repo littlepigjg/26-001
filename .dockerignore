@@ -37,3 +37,11 @@ build_benzhi_docker.sh
 
 # Test data
 testdata/
+
+# Test files (not needed in container)
+red_green_test.go
+验收.txt
+提示词2_缺陷注入.txt
+提示词3_Docker缺陷验证.txt
+branch.sh
+commit.sh
