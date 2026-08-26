@@ -69,15 +69,33 @@ func (s *ConfigService) GetConfig(ctx context.Context, appID, env, key string) (
 	return config, nil
 }
 
+// GetConfigForAudit retrieves a configuration item for audit purposes.
+// It validates the config exists and is ready for audit logging.
+func (s *ConfigService) GetConfigForAudit(ctx context.Context, appID, env, key string) (*model.ConfigItem, error) {
+	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {
+		return nil, err
+	}
+
+	config, err := s.store.GetConfig(ctx, appID, env, key)
+	if err != nil {
+		s.logger.Warnf("failed to get config for audit %s/%s/%s: %v", appID, env, key, err)
+		return nil, err
+	}
+
+	if config == nil {
+		return nil, model.ErrConfigNotFound(appID, env, key)
+	}
+
+	return config, nil
+}
+
 // UpdateConfig updates an existing configuration item.
 func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value, description, updatedBy string) (*model.ConfigItem, error) {
-	// Ensure the config exists
 	existing, err := s.store.GetConfig(ctx, appID, env, key)
 	if err != nil {
 		return nil, err
 	}
 
-	// Update fields
 	if value != "" {
 		existing.Value = value
 	}
@@ -101,6 +119,52 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 
 	s.logger.Infof("updated config: %s/%s/%s (v%d)", appID, env, key, existing.Version)
 	return existing, nil
+}
+
+// FetchPreviousConfigValue retrieves the previous value of a config before update.
+// It returns the value that should appear in audit logs as the old value.
+func (s *ConfigService) FetchPreviousConfigValue(ctx context.Context, appID, env, key string) (string, error) {
+	config, err := s.store.GetConfig(ctx, appID, env, key)
+	if err != nil {
+		return "", err
+	}
+	if config == nil {
+		return "", model.ErrConfigNotFound(appID, env, key)
+	}
+
+	previousVersion, err := s.store.GetLatestVersionNumber(ctx, appID, env)
+	if err != nil || previousVersion <= 1 {
+		return config.Value, nil
+	}
+
+	version, err := s.store.GetVersion(ctx, appID, env, previousVersion-1)
+	if err != nil || version == nil {
+		return config.Value, nil
+	}
+
+	if v, ok := version.ConfigData[key]; ok {
+		return v, nil
+	}
+
+	return config.Value, nil
+}
+
+// ApplyConfigUpdate applies changes to a config item and returns the old and new values.
+// This provides a way for handlers to get both old and new values for audit purposes.
+func (s *ConfigService) ApplyConfigUpdate(ctx context.Context, appID, env, key, value, description, updatedBy string) (oldValue string, newConfig *model.ConfigItem, err error) {
+	oldConfig, err := s.store.GetConfig(ctx, appID, env, key)
+	if err != nil {
+		return "", nil, err
+	}
+
+	oldValue = oldConfig.Value
+
+	newConfig, err = s.UpdateConfig(ctx, appID, env, key, value, description, updatedBy)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return oldValue, newConfig, nil
 }
 
 // DeleteConfig deletes a configuration item.

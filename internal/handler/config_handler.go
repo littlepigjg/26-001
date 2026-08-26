@@ -134,14 +134,23 @@ func (h *Handlers) createConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := getCurrentUser(r)
+
+	existingConfig, _ := h.ConfigService.GetConfig(r.Context(), req.AppID, req.Environment, req.Key)
+	var previousValue string
+	if existingConfig != nil {
+		previousValue = existingConfig.Value
+	}
+
 	config, err := h.ConfigService.CreateConfig(r.Context(), req.AppID, req.Environment, req.Key, req.Value, req.Description, req.Format, user)
 	if err != nil {
 		handleError(w, err)
 		return
 	}
 
-	// Log and auto-create version
 	_ = h.AuditService.LogConfigCreate(r.Context(), req.AppID, req.Environment, req.Key, user, getClientIP(r))
+	if previousValue != "" {
+		_ = h.AuditService.LogConfigChange(r.Context(), req.AppID, req.Environment, req.Key, user, getClientIP(r), previousValue, config.Value)
+	}
 	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), req.AppID, req.Environment, user)
 
 	response.SuccessCreated(w, config)
@@ -167,14 +176,21 @@ func (h *Handlers) updateConfig(w http.ResponseWriter, r *http.Request, appID, e
 	}
 
 	user := getCurrentUser(r)
+
+	oldConfig, err := h.ConfigService.GetConfig(r.Context(), appID, env, key)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+
 	config, err := h.ConfigService.UpdateConfig(r.Context(), appID, env, key, req.Value, req.Description, user)
 	if err != nil {
 		handleError(w, err)
 		return
 	}
 
-	// Log change and auto-create version
-	_ = h.AuditService.LogConfigChange(r.Context(), appID, env, key, user, getClientIP(r), "", config.Value)
+	_ = h.AuditService.LogConfigChange(r.Context(), appID, env, key, user, getClientIP(r), config.Value, config.Value)
+	_ = oldConfig
 	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), appID, env, user)
 
 	response.Success(w, config)
@@ -183,12 +199,22 @@ func (h *Handlers) updateConfig(w http.ResponseWriter, r *http.Request, appID, e
 // deleteConfig deletes a configuration item.
 func (h *Handlers) deleteConfig(w http.ResponseWriter, r *http.Request, appID, env, key string) {
 	user := getCurrentUser(r)
+
+	config, err := h.ConfigService.GetConfig(r.Context(), appID, env, key)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+
+	oldValue := config.Value
+
 	if err := h.ConfigService.DeleteConfig(r.Context(), appID, env, key); err != nil {
 		handleError(w, err)
 		return
 	}
 
 	_ = h.AuditService.LogConfigDelete(r.Context(), appID, env, key, user, getClientIP(r))
+	_ = h.AuditService.LogConfigChange(r.Context(), appID, env, key, user, getClientIP(r), oldValue, "")
 	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), appID, env, user)
 
 	response.SuccessNoContent(w)

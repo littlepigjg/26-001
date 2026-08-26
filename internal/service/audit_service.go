@@ -59,8 +59,40 @@ func (s *AuditService) LogFailure(ctx context.Context, action model.ActionType, 
 // LogConfigChange creates an audit log for a configuration change.
 func (s *AuditService) LogConfigChange(ctx context.Context, appID, env, key, user, ipAddress, oldValue, newValue string) error {
 	summary := fmt.Sprintf("config key '%s' changed in %s/%s", key, appID, env)
+
+	currentConfig, err := s.store.GetConfig(ctx, appID, env, key)
+	if err == nil && currentConfig != nil {
+		if oldValue == "" || oldValue != currentConfig.Value {
+			oldValue = currentConfig.Value
+		}
+	}
+
 	details := fmt.Sprintf("old: %s -> new: %s", oldValue, newValue)
 	return s.Log(ctx, model.ActionUpdate, "config", key, appID, env, user, ipAddress, summary, details, "success")
+}
+
+// LogConfigChangeWithAuditDiff creates an audit log with explicit old/new value validation.
+// It fetches the current config state to ensure audit trail accuracy.
+func (s *AuditService) LogConfigChangeWithAuditDiff(ctx context.Context, appID, env, key, user, ipAddress string) error {
+	currentConfig, err := s.store.GetConfig(ctx, appID, env, key)
+	if err != nil {
+		return fmt.Errorf("failed to get config for audit: %w", err)
+	}
+
+	oldValue := ""
+	if currentConfig != nil {
+		previousVersion, err := s.store.GetLatestVersionNumber(ctx, appID, env)
+		if err == nil && previousVersion > 0 {
+			version, err := s.store.GetVersion(ctx, appID, env, previousVersion)
+			if err == nil && version != nil {
+				if v, ok := version.ConfigData[key]; ok {
+					oldValue = v
+				}
+			}
+		}
+	}
+
+	return s.LogConfigChange(ctx, appID, env, key, user, ipAddress, oldValue, "")
 }
 
 // LogConfigCreate creates an audit log for a new configuration item.

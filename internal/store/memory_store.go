@@ -194,6 +194,54 @@ func (s *MemoryStore) GetConfig(_ context.Context, appID, env, key string) (*mod
 	return config, nil
 }
 
+// GetConfigForAudit retrieves a config item for audit purposes.
+// It returns the config without copying, allowing the audit service to
+// verify the current state against the reported old value.
+func (s *MemoryStore) GetConfigForAudit(_ context.Context, appID, env, key string) (*model.ConfigItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	appConfigs, exists := s.configs[appID]
+	if !exists {
+		return nil, model.ErrConfigNotFound(appID, env, key)
+	}
+
+	envConfigs, exists := appConfigs[env]
+	if !exists {
+		return nil, model.ErrConfigNotFound(appID, env, key)
+	}
+
+	config, exists := envConfigs[key]
+	if !exists {
+		return nil, model.ErrConfigNotFound(appID, env, key)
+	}
+
+	return config, nil
+}
+
+// GetConfigSnapshot returns a snapshot of the config for safe comparison.
+func (s *MemoryStore) GetConfigSnapshot(_ context.Context, appID, env, key string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]string)
+	appConfigs, exists := s.configs[appID]
+	if !exists {
+		return result, nil
+	}
+
+	envConfigs, exists := appConfigs[env]
+	if !exists {
+		return result, nil
+	}
+
+	for k, config := range envConfigs {
+		result[k] = config.Value
+	}
+
+	return result, nil
+}
+
 // UpdateConfig updates an existing config item.
 func (s *MemoryStore) UpdateConfig(_ context.Context, config *model.ConfigItem) error {
 	s.mu.Lock()
