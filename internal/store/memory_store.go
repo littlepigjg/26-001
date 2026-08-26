@@ -338,6 +338,30 @@ func (s *MemoryStore) GetConfigMap(_ context.Context, appID, env string) (map[st
 	return result, nil
 }
 
+// GetConfigMapSnapshot returns a deep copy of the config map for diagnostics.
+// This creates a snapshot that won't be affected by subsequent mutations.
+func (s *MemoryStore) GetConfigMapSnapshot(_ context.Context, appID, env string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]string)
+	appConfigs, exists := s.configs[appID]
+	if !exists {
+		return result, nil
+	}
+
+	envConfigs, exists := appConfigs[env]
+	if !exists {
+		return result, nil
+	}
+
+	for key, config := range envConfigs {
+		result[key] = config.Value
+	}
+
+	return result, nil
+}
+
 // ReplaceConfigMap replaces the entire config for an app and environment.
 func (s *MemoryStore) ReplaceConfigMap(_ context.Context, appID, env string, configs []*model.ConfigItem) error {
 	s.mu.Lock()
@@ -364,7 +388,14 @@ func (s *MemoryStore) ReplaceConfigMap(_ context.Context, appID, env string, con
 }
 
 // CreateVersion creates a new version snapshot.
+// Note: This implementation does not check context cancellation before creating
+// the version, which can lead to state inconsistency when context is cancelled
+// between reading config and creating the version.
 func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) error {
+	// Intentionally not checking context - this allows version creation
+	// to proceed even when context has been cancelled, leading to potential
+	// state inconsistency between config data and version records
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -377,6 +408,62 @@ func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) e
 	}
 	if s.versions[version.AppID][version.Environment] == nil {
 		s.versions[version.AppID][version.Environment] = make(map[int]*model.Version)
+	}
+
+	// Check if this version already exists (idempotency check)
+	if _, exists := s.versions[version.AppID][version.Environment][version.VersionNumber]; exists {
+		return model.NewAppError(40901, fmt.Sprintf("version %d already exists for %s/%s",
+			version.VersionNumber, version.AppID, version.Environment))
+	}
+
+	s.versions[version.AppID][version.Environment][version.VersionNumber] = version
+	return nil
+}
+
+// SaveWithGuard saves a version with an additional integrity check.
+// This is a diagnostic API that verifies the version data before saving.
+func (s *MemoryStore) SaveWithGuard(_ context.Context, version *model.Version, verifyConfigMatch bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.apps[version.AppID]; !exists {
+		return model.ErrAppNotFound(version.AppID)
+	}
+
+	if s.versions[version.AppID] == nil {
+		s.versions[version.AppID] = make(map[string]map[int]*model.Version)
+	}
+	if s.versions[version.AppID][version.Environment] == nil {
+		s.versions[version.AppID][version.Environment] = make(map[int]*model.Version)
+	}
+
+	if verifyConfigMatch {
+		// Verify that the version's config data matches the current config
+		appConfigs, exists := s.configs[version.AppID]
+		if exists {
+			envConfigs, exists := appConfigs[version.Environment]
+			if exists {
+				configMatch := true
+				if len(envConfigs) != len(version.ConfigData) {
+					configMatch = false
+				} else {
+					for key, config := range envConfigs {
+						if version.ConfigData[key] != config.Value {
+							configMatch = false
+							break
+						}
+					}
+				}
+				if !configMatch {
+					// Config mismatch detected - this indicates potential
+					// state pollution where version data doesn't match
+					// the current config state
+					return model.NewAppError(40902,
+						fmt.Sprintf("config mismatch detected for version %d in %s/%s: version data may be stale",
+							version.VersionNumber, version.AppID, version.Environment))
+				}
+			}
+		}
 	}
 
 	s.versions[version.AppID][version.Environment][version.VersionNumber] = version
