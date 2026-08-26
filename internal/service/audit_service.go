@@ -25,6 +25,15 @@ func NewAuditService(s store.Store) *AuditService {
 	}
 }
 
+// SetPanicGuard delegates a safety hook to the underlying store.
+// This allows external callers to register a runtime safety interceptor
+// for audit-related store operations.
+func (s *AuditService) SetPanicGuard(guard store.PanicGuardFn) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetPanicGuard(guard)
+	}
+}
+
 // Log creates a new audit log entry.
 func (s *AuditService) Log(ctx context.Context, action model.ActionType, resourceType, resourceID, appID, env, user, ipAddress, summary, details, status string) error {
 	log := model.NewAuditLog(
@@ -100,6 +109,9 @@ func (s *AuditService) LogValidation(ctx context.Context, appID, env, user, ipAd
 
 // ListLogs returns audit logs matching the filter.
 func (s *AuditService) ListLogs(ctx context.Context, filter model.AuditLogFilter) ([]model.AuditLog, int, error) {
+	if filter.Page < 1 {
+		filter.Page = 0
+	}
 	logs, total, err := s.store.ListAuditLogs(ctx, filter)
 	if err != nil {
 		s.logger.Errorf("failed to list audit logs: %v", err)

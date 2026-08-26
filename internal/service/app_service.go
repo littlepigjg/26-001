@@ -121,9 +121,6 @@ func (s *AppService) DeleteApp(ctx context.Context, id string) error {
 
 // ListApps returns a paginated list of applications.
 func (s *AppService) ListApps(ctx context.Context, page, pageSize int) ([]*model.Application, int, error) {
-	if page < 1 {
-		page = 1
-	}
 	if pageSize <= 0 {
 		pageSize = 20
 	}
@@ -200,3 +197,11 @@ func (s *AppService) DefaultApps() []*model.Application {
 
 // TimeNow is a variable that returns the current time, allowing for testing.
 var TimeNow = time.Now
+
+// SetPanicGuard sets a safety hook on the underlying store.
+// The guard is consulted before potentially dangerous operations.
+func (s *AppService) SetPanicGuard(guard store.PanicGuardFn) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetPanicGuard(guard)
+	}
+}

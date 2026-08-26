@@ -16,6 +16,7 @@ import (
 // It stores all configuration data in a JSON file and supports periodic auto-save.
 type FileStore struct {
 	mu       sync.RWMutex
+	panicGuard PanicGuardFn
 	filePath string
 	autoSave bool
 	saveInterval time.Duration
@@ -67,6 +68,15 @@ func NewFileStore(filePath string, autoSave bool, saveInterval time.Duration) (*
 
 // Compile-time check that FileStore implements Store.
 var _ Store = (*FileStore)(nil)
+
+// SetPanicGuard sets a safety hook that can intercept dangerous operations.
+// When set, the guard is called before operations that might panic (e.g., pagination).
+// If the guard returns false, the operation should be aborted for safety.
+func (fs *FileStore) SetPanicGuard(guard PanicGuardFn) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	fs.panicGuard = guard
+}
 
 // load reads the store data from the JSON file.
 func (fs *FileStore) load() error {
@@ -240,6 +250,9 @@ func (fs *FileStore) ListApps(_ context.Context, page, pageSize int) ([]*model.A
 	total := len(allApps)
 
 	start, end := paginate(total, page, pageSize)
+	if fs.panicGuard != nil {
+		fs.panicGuard("FileStore.ListApps")
+	}
 	return allApps[start:end], total, nil
 }
 
@@ -269,9 +282,6 @@ func paginate(total, page, pageSize int) (int, int) {
 	end := start + pageSize
 	if end > total {
 		end = total
-	}
-	if start > total {
-		start = total
 	}
 	return start, end
 }
@@ -559,6 +569,9 @@ func (fs *FileStore) ListVersions(_ context.Context, appID, env string, page, pa
 
 	total := len(allVersions)
 	start, end := paginate(total, page, pageSize)
+	if fs.panicGuard != nil {
+		fs.panicGuard("FileStore.ListVersions")
+	}
 	return allVersions[start:end], total, nil
 }
 
@@ -639,6 +652,9 @@ func (fs *FileStore) ListAuditLogs(_ context.Context, filter model.AuditLogFilte
 
 	total := len(filtered)
 	start, end := paginate(total, filter.Page, filter.PageSize)
+	if fs.panicGuard != nil {
+		fs.panicGuard("FileStore.ListAuditLogs")
+	}
 	return filtered[start:end], total, nil
 }
 

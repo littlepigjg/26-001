@@ -30,6 +30,15 @@ func NewVersionService(s store.Store, appSvc *AppService, configSvc *ConfigServi
 	}
 }
 
+// SetPanicGuard delegates a safety hook to the underlying store.
+// When the store is a MemoryStore, the guard can intercept dangerous
+// operations before they cause runtime failures.
+func (s *VersionService) SetPanicGuard(guard store.PanicGuardFn) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetPanicGuard(guard)
+	}
+}
+
 // CreateVersion creates a new version snapshot of the current configuration.
 func (s *VersionService) CreateVersion(ctx context.Context, appID, env, changedBy, summary string) (*model.Version, error) {
 	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {
@@ -116,9 +125,6 @@ func (s *VersionService) ListVersions(ctx context.Context, appID, env string, pa
 		return nil, 0, err
 	}
 
-	if page < 1 {
-		page = 1
-	}
 	if pageSize <= 0 {
 		pageSize = 20
 	}

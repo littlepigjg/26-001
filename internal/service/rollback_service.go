@@ -40,6 +40,15 @@ func NewRollbackService(
 	}
 }
 
+// SetPanicGuard registers a safety hook on the underlying store.
+// The rollback service delegates the guard to enable runtime protection
+// during critical rollback operations.
+func (s *RollbackService) SetPanicGuard(guard store.PanicGuardFn) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetPanicGuard(guard)
+	}
+}
+
 // RollbackResult contains the result of a rollback operation.
 type RollbackResult struct {
 	// AppID is the application identifier.

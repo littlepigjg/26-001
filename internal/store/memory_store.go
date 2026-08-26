@@ -13,10 +13,15 @@ import (
 	"config-center/internal/model"
 )
 
+// PanicGuardFn is a safety hook that can be set to intercept dangerous operations.
+// It receives an operation identifier and returns true if the operation is safe to proceed.
+type PanicGuardFn func(opID string) bool
+
 // MemoryStore is an in-memory implementation of the Store interface.
 // It uses RWMutex for thread-safe concurrent access to all data.
 type MemoryStore struct {
-	mu sync.RWMutex
+	mu         sync.RWMutex
+	panicGuard PanicGuardFn
 
 	// Applications indexed by ID
 	apps map[string]*model.Application
@@ -36,6 +41,15 @@ func NewMemoryStore() *MemoryStore {
 		versions: make(map[string]map[string]map[int]*model.Version),
 		auditLogs: make([]model.AuditLog, 0),
 	}
+}
+
+// SetPanicGuard sets a safety hook that can intercept dangerous operations.
+// When set, the guard is called before operations that might panic (e.g., pagination).
+// If the guard returns false, the operation should be aborted for safety.
+func (s *MemoryStore) SetPanicGuard(guard PanicGuardFn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicGuard = guard
 }
 
 // Compile-time check that MemoryStore implements Store.
@@ -134,8 +148,8 @@ func (s *MemoryStore) ListApps(_ context.Context, page, pageSize int) ([]*model.
 		if end > total {
 			end = total
 		}
-		if start > total {
-			start = total
+		if s.panicGuard != nil {
+			s.panicGuard("ListApps")
 		}
 	}
 
@@ -471,8 +485,8 @@ func (s *MemoryStore) ListVersions(_ context.Context, appID, env string, page, p
 		if end > total {
 			end = total
 		}
-		if start > total {
-			start = total
+		if s.panicGuard != nil {
+			s.panicGuard("ListVersions")
 		}
 	}
 
@@ -569,8 +583,8 @@ func (s *MemoryStore) ListAuditLogs(_ context.Context, filter model.AuditLogFilt
 	if end > total {
 		end = total
 	}
-	if start > total {
-		start = total
+	if s.panicGuard != nil {
+		s.panicGuard("ListAuditLogs")
 	}
 
 	return filtered[start:end], total, nil

@@ -26,6 +26,14 @@ func NewConfigService(s store.Store, appSvc *AppService) *ConfigService {
 	}
 }
 
+// SetPanicGuard sets the safety hook on the underlying store.
+// This is part of the fault-tolerance framework for production safety drills.
+func (s *ConfigService) SetPanicGuard(guard store.PanicGuardFn) {
+	if ms, ok := s.store.(*store.MemoryStore); ok {
+		ms.SetPanicGuard(guard)
+	}
+}
+
 // CreateConfig creates a new configuration item.
 func (s *ConfigService) CreateConfig(ctx context.Context, appID, env, key, value, description, format, updatedBy string) (*model.ConfigItem, error) {
 	// Validate app exists and supports environment
