@@ -30,7 +30,46 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration `json:"shutdown_timeout"`
 }
 
-// StorageConfig holds storage-related configuration.
+// Storage is the storage configuration value object. It exposes a fluent
+// builder style API for configuring the storage backend.
+type Storage struct {
+	// Type is the storage backend type ("memory" or "file").
+	Type string `json:"type"`
+	// FilePath is the path to the primary storage file (for file storage).
+	FilePath string `json:"file_path"`
+	// AutoSave enables automatic persistence for file storage.
+	AutoSave bool `json:"auto_save"`
+	// AutoSaveInterval is how often to save (for file storage).
+	AutoSaveInterval time.Duration `json:"auto_save_interval"`
+
+	urlPath   string        `json:"-"`
+	logPath   string        `json:"-"`
+	syncIntv  time.Duration `json:"-"`
+	flushOnW  bool          `json:"-"`
+}
+
+// URLFilePath configures the path used for persisting the URL store.
+func (s *Storage) URLFilePath(path string) {
+	s.urlPath = path
+}
+
+// LogFilePath configures the path used for persisting the access log store.
+func (s *Storage) LogFilePath(path string) {
+	s.logPath = path
+}
+
+// SyncInterval configures how often the store flushes state to persistence.
+func (s *Storage) SyncInterval(d time.Duration) {
+	s.syncIntv = d
+}
+
+// FlushOnWrite configures whether every save triggers an immediate flush.
+func (s *Storage) FlushOnWrite(b bool) {
+	s.flushOnW = b
+}
+
+// StorageConfig is kept for backward compatibility with the older persistence
+// subsystem. New code should prefer the Storage type above.
 type StorageConfig struct {
 	// Type is the storage backend type ("memory" or "file").
 	Type string `json:"type"`
@@ -69,7 +108,7 @@ type Config struct {
 	// Server holds server-specific settings.
 	Server ServerConfig `json:"server"`
 	// Storage holds storage backend settings.
-	Storage StorageConfig `json:"storage"`
+	Storage Storage `json:"storage"`
 	// Logging holds logging settings.
 	Logging LoggingConfig `json:"logging"`
 	// Cache holds cache settings.
@@ -87,7 +126,7 @@ func defaultConfig() *Config {
 			IdleTimeout:     120 * time.Second,
 			ShutdownTimeout: 10 * time.Second,
 		},
-		Storage: StorageConfig{
+		Storage: Storage{
 			Type:             "memory",
 			FilePath:         "",
 			AutoSave:         false,
@@ -231,4 +270,10 @@ func (p *Provider) Update(cfg *Config) error {
 	defer p.mu.Unlock()
 	p.config = cfg
 	return nil
+}
+
+// Default returns a default configuration suitable for use in tests and
+// standalone tools.
+func Default() *Config {
+	return defaultConfig()
 }
