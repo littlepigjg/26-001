@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>配置中心 - Configuration Center</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 0;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        header h1 { text-align: center; font-size: 24px; }
+        header .subtitle { text-align: center; opacity: 0.9; margin-top: 5px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .nav button:hover { background: #e8eaf6; transform: translateY(-1px); }
+        .nav button.active { background: #667eea; color: white; }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .card h2 { font-size: 18px; margin-bottom: 15px; color: #333; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; color: #555; }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover { background: #5a67d8; }
+        .btn-secondary {
+            background: #f0f2f5;
+            color: #555;
+            border: 1px solid #ddd;
+            padding: 10px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn-secondary:hover { background: #e8eaed; }
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            text-align: left;
+            padding: 10px;
+            background: #f8f9fa;
+            border-bottom: 2px solid #dee2e6;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+        tr:hover { background: #f8f9fa; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-dev { background: #e3f2fd; color: #1976d2; }
+        .badge-test { background: #fff3e0; color: #f57c00; }
+        .badge-staging { background: #f3e5f5; color: #7b1fa2; }
+        .badge-prod { background: #ffebee; color: #c62828; }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: white;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast-success { background: #28a745; }
+        .toast-error { background: #dc3545; }
+        .toast-info { background: #17a2b8; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; }
+        .stat-card .value { font-size: 24px; font-weight: bold; color: #667eea; }
+        .stat-card .label { font-size: 13px; color: #888; margin-top: 5px; }
+        .hidden { display: none !important; }
+        .editor {
+            width: 100%;
+            min-height: 150px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+        .tabs { display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .tab.active { border-color: #667eea; color: #667eea; font-weight: 600; }
+        .env-selector { display: flex; gap: 8px; margin-bottom: 15px; }
+        .env-selector button {
+            padding: 6px 14px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .env-selector button.active { background: #667eea; color: white; border-color: #667eea; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚙️ 配置管理中心</h1>
+            <div class="subtitle">Configuration Center - 多应用多环境配置管理</div>
+        </header>
+
+        <div class="stats" id="stats"></div>
+
+        <div class="card">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('apps')">应用管理</div>
+                <div class="tab" onclick="switchTab('configs')">配置管理</div>
+                <div class="tab" onclick="switchTab('versions')">版本历史</div>
+                <div class="tab" onclick="switchTab('audit')">操作日志</div>
+            </div>
+
+            <!-- Apps Tab -->
+            <div id="tab-apps">
+                <div class="form-group">
+                    <h2>创建应用</h2>
+                    <div class="grid">
+                        <div>
+                            <label>应用ID</label>
+                            <input type="text" id="app-id" placeholder="my-app">
+                        </div>
+                        <div>
+                            <label>应用名称</label>
+                            <input type="text" id="app-name" placeholder="My Application">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top:10px">
+                        <label>描述</label>
+                        <input type="text" id="app-desc" placeholder="Application description">
+                    </div>
+                    <div class="form-group">
+                        <label>负责人</label>
+                        <input type="text" id="app-owner" placeholder="team-name">
+                    </div>
+                    <button class="btn-primary" onclick="createApp()">创建应用</button>
+                </div>
+
+                <h2 style="margin-top:20px">应用列表</h2>
+                <table id="apps-table">
+                    <thead>
+                        <tr><th>ID</th><th>名称</th><th>描述</th><th>负责人</th><th>环境</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="apps-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Configs Tab -->
+            <div id="tab-configs" class="hidden">
+                <div class="grid">
+                    <div>
+                        <label>选择应用</label>
+                        <select id="config-app" onchange="loadConfigs()"></select>
+                    </div>
+                    <div>
+                        <label>环境</label>
+                        <div class="env-selector">
+                            <button data-env="dev" class="active" onclick="selectEnv('dev')">dev</button>
+                            <button data-env="test" onclick="selectEnv('test')">test</button>
+                            <button data-env="staging" onclick="selectEnv('staging')">staging</button>
+                            <button data-env="prod" onclick="selectEnv('prod')">prod</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <h2>添加配置项</h2>
+                    <div class="grid">
+                        <div>
+                            <label>Key</label>
+                            <input type="text" id="cfg-key" placeholder="database.host">
+                        </div>
+                        <div>
+                            <label>格式</label>
+                            <select id="cfg-format">
+                                <option value="string">string</option>
+                                <option value="json">json</option>
+                                <option value="yaml">yaml</option>
+                                <option value="number">number</option>
+                                <option value="boolean">boolean</option>
+                                <option value="url">url</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Value</label>
+                        <textarea id="cfg-value" class="editor" placeholder="config value"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>描述</label>
+                        <input type="text" id="cfg-desc" placeholder="Config description">
+                    </div>
+                    <button class="btn-primary" onclick="createConfig()">添加配置</button>
+                </div>
+
+                <h2 style="margin-top:20px">配置列表</h2>
+                <table id="config-table">
+                    <thead>
+                        <tr><th>Key</th><th>Value</th><th>格式</th><th>版本</th><th>更新时间</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="config-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Versions Tab -->
+            <div id="tab-versions" class="hidden">
+                <div class="grid">
+                    <div>
+                        <label>选择应用</label>
+                        <select id="ver-app" onchange="loadVersions()"></select>
+                    </div>
+                    <div>
+                        <label>环境</label>
+                        <select id="ver-env" onchange="loadVersions()">
+                            <option value="dev">dev</option>
+                            <option value="test">test</option>
+                            <option value="staging">staging</option>
+                            <option value="prod">prod</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="margin-top:10px">
+                    <button class="btn-primary" onclick="createVersion()">创建版本快照</button>
+                </div>
+                <h2 style="margin-top:20px">版本历史</h2>
+                <table id="version-table">
+                    <thead>
+                        <tr><th>版本号</th><th>Hash</th><th>变更摘要</th><th>操作者</th><th>创建时间</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="version-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Audit Tab -->
+            <div id="tab-audit" class="hidden">
+                <div class="grid">
+                    <div>
+                        <label>筛选应用</label>
+                        <select id="audit-app" onchange="loadAuditLogs()">
+                            <option value="">全部</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>操作类型</label>
+                        <select id="audit-action" onchange="loadAuditLogs()">
+                            <option value="">全部</option>
+                            <option value="CREATE">CREATE</option>
+                            <option value="UPDATE">UPDATE</option>
+                            <option value="DELETE">DELETE</option>
+                            <option value="ROLLBACK">ROLLBACK</option>
+                            <option value="EXPORT">EXPORT</option>
+                        </select>
+                    </div>
+                </div>
+                <h2 style="margin-top:20px">操作日志</h2>
+                <table id="audit-table">
+                    <thead>
+                        <tr><th>时间</th><th>操作</th><th>资源</th><th>用户</th><th>状态</th><th>摘要</th></tr>
+                    </thead>
+                    <tbody id="audit-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+        let currentEnv = 'dev';
+
+        function showToast(msg, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('[id^="tab-"]').forEach(t => t.classList.add('hidden'));
+            event.target.classList.add('active');
+            document.getElementById(`tab-${tab}`).classList.remove('hidden');
+            if (tab === 'apps') loadApps();
+            if (tab === 'configs') loadConfigs();
+            if (tab === 'versions') loadVersions();
+            if (tab === 'audit') loadAuditLogs();
+        }
+
+        function selectEnv(env) {
+            currentEnv = env;
+            document.querySelectorAll('.env-selector button').forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-env="${env}"]`).classList.add('active');
+            loadConfigs();
+        }
+
+        async function api(method, path, body = null) {
+            const opts = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(API + path, opts);
+            const data = await res.json().catch(() => ({}));
+            if (data.code !== 0 && data.code !== undefined) {
+                showToast(data.message || 'Request failed', 'error');
+                throw new Error(data.message);
+            }
+            return data.data !== undefined ? data.data : data;
+        }
+
+        async function loadStats() {
+            try {
+                const apps = await api('GET', '/api/apps?page=1&page_size=100');
+                const versions = await api('GET', '/api/versions?app_id=default-service&environment=dev&page=1&page_size=1');
+                document.getElementById('stats').innerHTML = `
+                    <div class="stat-card"><div class="value">${apps.length || 0}</div><div class="label">应用总数</div></div>
+                    <div class="stat-card"><div class="value">${getTotal(versions) || 0}</div><div class="label">版本总数</div></div>
+                `;
+            } catch(e) {}
+        }
+
+        function getTotal(data) {
+            return data && data.total ? data.total : 0;
+        }
+
+        async function loadApps() {
+            try {
+                const data = await api('GET', '/api/apps?page=1&page_size=100');
+                const apps = data.items || data || [];
+                const tbody = document.getElementById('apps-body');
+                tbody.innerHTML = apps.map(app => `
+                    <tr>
+                        <td><code>${app.id}</code></td>
+                        <td>${app.name}</td>
+                        <td>${app.description || '-'}</td>
+                        <td>${app.owner}</td>
+                        <td>${(app.environments || []).map(e => `<span class="badge badge-${e}">${e}</span>`).join(' ')}</td>
+                        <td><button class="btn-danger" onclick="deleteApp('${app.id}')">删除</button></td>
+                    </tr>
+                `).join('') || '<tr><td colspan="6" style="text-align:center;color:#999">暂无应用</td></tr>';
+
+                const selects = ['config-app', 'ver-app', 'audit-app'];
+                selects.forEach(id => {
+                    const sel = document.getElementById(id);
+                    if (sel) {
+                        sel.innerHTML = id === 'audit-app'
+                            ? '<option value="">全部</option>' + apps.map(a => `<option value="${a.id}">${a.name}</option>`).join('')
+                            : apps.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+                    }
+                });
+            } catch(e) { showToast('加载应用列表失败', 'error'); }
+        }
+
+        async function createApp() {
+            const id = document.getElementById('app-id').value;
+            const name = document.getElementById('app-name').value;
+            const desc = document.getElementById('app-desc').value;
+            const owner = document.getElementById('app-owner').value;
+            try {
+                await api('POST', '/api/apps', { name: name || id, description: desc, owner: owner });
+                showToast('应用创建成功', 'success');
+                ['app-id','app-name','app-desc','app-owner'].forEach(id => document.getElementById(id).value = '');
+                loadApps();
+                loadStats();
+            } catch(e) {}
+        }
+
+        async function deleteApp(id) {
+            if (!confirm('确定删除此应用？此操作不可恢复！')) return;
+            try {
+                await api('DELETE', `/api/apps/${id}`);
+                showToast('应用已删除', 'success');
+                loadApps();
+                loadStats();
+            } catch(e) {}
+        }
+
+        async function loadConfigs() {
+            const appId = document.getElementById('config-app').value;
+            if (!appId) return;
+            try {
+                const data = await api('GET', `/api/configs?app_id=${appId}&environment=${currentEnv}`);
+                const items = data.items || [];
+                const tbody = document.getElementById('config-body');
+                tbody.innerHTML = items.map(c => `
+                    <tr>
+                        <td><code>${c.key}</code></td>
+                        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c.value}">${c.value}</td>
+                        <td>${c.format || 'string'}</td>
+                        <td>${c.version}</td>
+                        <td>${new Date(c.updated_at).toLocaleString()}</td>
+                        <td><button class="btn-danger" onclick="deleteConfig('${c.key}')">删除</button></td>
+                    </tr>
+                `).join('') || '<tr><td colspan="6" style="text-align:center;color:#999">暂无配置项</td></tr>';
+            } catch(e) { showToast('加载配置失败', 'error'); }
+        }
+
+        async function createConfig() {
+            const appId = document.getElementById('config-app').value;
+            const key = document.getElementById('cfg-key').value;
+            const value = document.getElementById('cfg-value').value;
+            const format = document.getElementById('cfg-format').value;
+            const desc = document.getElementById('cfg-desc').value;
+            if (!appId || !key) { showToast('应用和Key必填', 'error'); return; }
+            try {
+                await api('POST', '/api/configs', {
+                    app_id: appId, environment: currentEnv,
+                    key, value, description: desc, format
+                });
+                showToast('配置创建成功', 'success');
+                ['cfg-key','cfg-value','cfg-desc'].forEach(id => document.getElementById(id).value = '');
+                loadConfigs();
+            } catch(e) {}
+        }
+
+        async function deleteConfig(key) {
+            const appId = document.getElementById('config-app').value;
+            if (!confirm(`确定删除配置项 ${key}？`)) return;
+            try {
+                await api('DELETE', `/api/configs/${appId}/${currentEnv}/${key}`);
+                showToast('配置已删除', 'success');
+                loadConfigs();
+            } catch(e) {}
+        }
+
+        async function loadVersions() {
+            const appId = document.getElementById('ver-app').value;
+            const env = document.getElementById('ver-env').value;
+            if (!appId) return;
+            try {
+                const data = await api('GET', `/api/versions?app_id=${appId}&environment=${env}`);
+                const versions = data.items || [];
+                const tbody = document.getElementById('version-body');
+                tbody.innerHTML = versions.map(v => `
+                    <tr>
+                        <td>v${v.version_number}</td>
+                        <td><code>${v.config_hash}</code></td>
+                        <td>${v.change_summary || '-'}</td>
+                        <td>${v.changed_by}</td>
+                        <td>${new Date(v.created_at).toLocaleString()}</td>
+                        <td><button class="btn-secondary" style="font-size:12px;padding:4px 10px" onclick="rollback(${v.version_number})">回滚</button></td>
+                    </tr>
+                `).join('') || '<tr><td colspan="6" style="text-align:center;color:#999">暂无版本</td></tr>';
+            } catch(e) { showToast('加载版本失败', 'error'); }
+        }
+
+        async function createVersion() {
+            const appId = document.getElementById('ver-app').value;
+            const env = document.getElementById('ver-env').value;
+            if (!appId) return;
+            try {
+                await api('POST', '/api/versions', { app_id: appId, environment: env, summary: 'Manual snapshot' });
+                showToast('版本快照创建成功', 'success');
+                loadVersions();
+            } catch(e) {}
+        }
+
+        async function rollback(version) {
+            const appId = document.getElementById('ver-app').value;
+            const env = document.getElementById('ver-env').value;
+            if (!confirm(`确定回滚到版本 ${version}？`)) return;
+            try {
+                await api('POST', '/api/rollback', { app_id: appId, environment: env, target_version: version });
+                showToast('回滚成功', 'success');
+                loadVersions();
+                loadConfigs();
+            } catch(e) {}
+        }
+
+        async function loadAuditLogs() {
+            const appId = document.getElementById('audit-app').value;
+            const action = document.getElementById('audit-action').value;
+            try {
+                let url = '/api/audit-logs?page=1&page_size=50';
+                if (appId) url += `&app_id=${appId}`;
+                if (action) url += `&action=${action}`;
+                const data = await api('GET', url);
+                const logs = data.items || [];
+                const tbody = document.getElementById('audit-body');
+                tbody.innerHTML = logs.map(l => `
+                    <tr>
+                        <td>${new Date(l.created_at).toLocaleString()}</td>
+                        <td><span class="badge badge-${getActionColor(l.action)}">${l.action}</span></td>
+                        <td>${l.resource_type}:${l.resource_id}</td>
+                        <td>${l.user}</td>
+                        <td>${l.status}</td>
+                        <td>${l.summary}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="6" style="text-align:center;color:#999">暂无日志</td></tr>';
+            } catch(e) { showToast('加载日志失败', 'error'); }
+        }
+
+        function getActionColor(action) {
+            switch(action) {
+                case 'CREATE': return 'dev';
+                case 'UPDATE': return 'test';
+                case 'DELETE': return 'prod';
+                case 'ROLLBACK': return 'staging';
+                default: return 'dev';
+            }
+        }
+
+        // Initialize
+        loadApps();
+        loadStats();
+        setInterval(loadStats, 30000);
+    </script>
+</body>
+</html>
