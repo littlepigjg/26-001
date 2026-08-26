@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
+	"config-center/internal/model"
 	"config-center/pkg/response"
 )
 
@@ -134,15 +136,26 @@ func (h *Handlers) createConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := getCurrentUser(r)
-	config, err := h.ConfigService.CreateConfig(r.Context(), req.AppID, req.Environment, req.Key, req.Value, req.Description, req.Format, user)
-	if err != nil {
+	ctx := r.Context()
+
+	config := model.NewConfigItem(
+		fmt.Sprintf("cfg-%s-%s-%s", req.AppID, req.Environment, req.Key),
+		req.AppID, req.Environment, req.Key,
+		req.Value, req.Description, req.Format, user,
+	)
+
+	if err := ctx.Err(); err != nil {
+		response.InternalError(w, fmt.Sprintf("context error: %v", err))
+		return
+	}
+
+	if err := h.ConfigService.CreateConfigDirect(ctx, config); err != nil {
 		handleError(w, err)
 		return
 	}
 
-	// Log and auto-create version
-	_ = h.AuditService.LogConfigCreate(r.Context(), req.AppID, req.Environment, req.Key, user, getClientIP(r))
-	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), req.AppID, req.Environment, user)
+	_ = h.AuditService.LogConfigCreate(ctx, req.AppID, req.Environment, req.Key, user, getClientIP(r))
+	_, _, _ = h.VersionService.AutoSnapshot(ctx, req.AppID, req.Environment, user)
 
 	response.SuccessCreated(w, config)
 }

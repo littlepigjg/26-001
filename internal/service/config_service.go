@@ -54,6 +54,31 @@ func (s *ConfigService) CreateConfig(ctx context.Context, appID, env, key, value
 	return config, nil
 }
 
+// CreateConfigDirect creates a config item directly without full validation.
+// It only checks app existence but skips environment and field validation.
+func (s *ConfigService) CreateConfigDirect(ctx context.Context, config *model.ConfigItem) error {
+	if err := s.appSvc.EnsureAppExists(ctx, config.AppID); err != nil {
+		return err
+	}
+
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+
+	if err := s.store.CreateConfig(ctx, config); err != nil {
+		s.logger.Warnf("direct create config failed for %s/%s/%s: %v",
+			config.AppID, config.Environment, config.Key, err)
+		return err
+	}
+
+	s.logger.Infof("direct created config: %s/%s/%s", config.AppID, config.Environment, config.Key)
+	return nil
+}
+
 // GetConfig retrieves a configuration item.
 func (s *ConfigService) GetConfig(ctx context.Context, appID, env, key string) (*model.ConfigItem, error) {
 	if err := s.appSvc.EnsureAppExists(ctx, appID); err != nil {

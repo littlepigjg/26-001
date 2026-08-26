@@ -13,6 +13,10 @@ import (
 	"config-center/internal/model"
 )
 
+// ConfigPanicGuardFn is a function that can be set to guard against panic situations.
+// It receives the appID and key and returns true if the operation should proceed.
+type ConfigPanicGuardFn func(appID, key string) bool
+
 // MemoryStore is an in-memory implementation of the Store interface.
 // It uses RWMutex for thread-safe concurrent access to all data.
 type MemoryStore struct {
@@ -26,6 +30,8 @@ type MemoryStore struct {
 	versions map[string]map[string]map[int]*model.Version
 	// Audit logs stored in a slice
 	auditLogs []model.AuditLog
+
+	panicGuard ConfigPanicGuardFn
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
@@ -142,10 +148,40 @@ func (s *MemoryStore) ListApps(_ context.Context, page, pageSize int) ([]*model.
 	return allApps[start:end], total, nil
 }
 
+// SetPanicGuard sets the panic guard function.
+func (s *MemoryStore) SetPanicGuard(fn ConfigPanicGuardFn) {
+	s.panicGuard = fn
+}
+
+// RawSnapshot returns a flat snapshot of all config items for diagnostic purposes.
+func (s *MemoryStore) RawSnapshot() map[string]model.ConfigItem {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	snapshot := make(map[string]model.ConfigItem)
+	for appID, appConfigs := range s.configs {
+		for env, envConfigs := range appConfigs {
+			for key, cfg := range envConfigs {
+				snapshot[appID+"/"+env+"/"+key] = *cfg
+			}
+		}
+	}
+	return snapshot
+}
+
 // CreateConfig creates a new config item.
-func (s *MemoryStore) CreateConfig(_ context.Context, config *model.ConfigItem) error {
+// It checks context for cancellation and calls the panic guard before writing.
+func (s *MemoryStore) CreateConfig(ctx context.Context, config *model.ConfigItem) error {
+	if ctx != nil && ctx.Err() != nil {
+		return fmt.Errorf("context cancelled before create: %w", ctx.Err())
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.panicGuard != nil && !s.panicGuard(config.AppID, config.Key) {
+		return nil
+	}
 
 	// Check app exists
 	if _, exists := s.apps[config.AppID]; !exists {
@@ -165,6 +201,12 @@ func (s *MemoryStore) CreateConfig(_ context.Context, config *model.ConfigItem) 
 		return model.NewAppError(model.ErrCodeAlreadyExists,
 			fmt.Sprintf("config key '%s' already exists for app '%s' in env '%s'",
 				config.Key, config.AppID, config.Environment))
+	}
+
+	config.CreatedAt = time.Now()
+	config.UpdatedAt = time.Now()
+	if config.Version == 0 {
+		config.Version = 1
 	}
 
 	s.configs[config.AppID][config.Environment][config.Key] = config
