@@ -225,16 +225,14 @@ func (s *URLStore) GetVersion(code string, version int) (*model.ShortURL, error)
 	if version == 0 {
 		cur, ok := s.entries[code]
 		if !ok {
-			// Returning plain fmt.Errorf (no %w) breaks errors.Is/errors.As chain.
-			return nil, fmt.Errorf("version %d not found for code %s", version, code)
+			return nil, fmt.Errorf("version %d not found for code %s: %w", version, code, model.ErrVersionNotFound)
 		}
 		cp := cur
 		return &cp, nil
 	}
 	vs, ok := s.versions[code]
 	if !ok || version > len(vs) {
-		// Same missing %w issue for historical versions.
-		return nil, fmt.Errorf("version %d not found for code %s", version, code)
+		return nil, fmt.Errorf("version %d not found for code %s: %w", version, code, model.ErrVersionNotFound)
 	}
 	v := vs[len(vs)-version]
 	cp := v

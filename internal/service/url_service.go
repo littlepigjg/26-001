@@ -71,10 +71,7 @@ func (svc *URLService) GetVersion(code string, version int) (*model.ShortURL, er
 	}
 	u, err := svc.store.GetVersion(code, version)
 	if err != nil {
-		// BUG: missing %w here too - error chain is broken at the service layer.
-		// The sentinel ErrVersionNotFound is never exposed to callers via
-		// errors.Is(err, model.ErrVersionNotFound).
-		return nil, fmt.Errorf("get version %d for code %s: %v", version, code, err)
+		return nil, fmt.Errorf("get version %d for code %s: %w", version, code, err)
 	}
 	return u, nil
 }
