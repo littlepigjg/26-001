@@ -18,7 +18,7 @@ type HealthMonitor struct {
 	mu       sync.Mutex
 	running  bool
 	quit     chan struct{}
-	wg       sync.WaitGroup
+	done     chan struct{}
 
 	// Track last health report for diagnostic access
 	lastReport *HealthReport
@@ -57,24 +57,38 @@ func (hm *HealthMonitor) Start() {
 		hm.mu.Unlock()
 		return
 	}
-	hm.running = true
+	// Each run gets its own quit/done pair. This avoids reusing a shared
+	// WaitGroup across overlapping Stop/Start cycles, which would otherwise
+	// panic ("WaitGroup is reused before previous Wait has returned").
 	hm.quit = make(chan struct{})
+	hm.done = make(chan struct{})
 	currentQuit := hm.quit
+	currentDone := hm.done
+	hm.running = true
 	hm.mu.Unlock()
 
-	hm.wg.Add(1)
-	go hm.monitorLoop(currentQuit)
+	go hm.monitorLoop(currentQuit, currentDone)
 }
 
 // Stop terminates the health monitoring loop.
-// It blocks until the monitoring goroutine has exited.
+// It blocks until the monitoring goroutine has exited, so no delayed health
+// check callbacks run after Stop returns. Concurrent Stop calls collapse onto
+// the same per-run done channel.
 func (hm *HealthMonitor) Stop() {
 	hm.mu.Lock()
-	defer hm.mu.Unlock()
-	if hm.running {
-		hm.running = false
-		close(hm.quit)
+	if !hm.running {
+		hm.mu.Unlock()
+		return
 	}
+	hm.running = false
+	close(hm.quit)
+	// Capture this run's done channel, then release the lock so monitorLoop
+	// is free to proceed and close done.
+	currentDone := hm.done
+	hm.mu.Unlock()
+
+	// Block until the loop for this run has fully returned.
+	<-currentDone
 }
 
 // CheckNow performs an immediate health check and returns the report.
@@ -128,8 +142,8 @@ func (hm *HealthMonitor) IsRunning() bool {
 	return hm.running
 }
 
-func (hm *HealthMonitor) monitorLoop(quit <-chan struct{}) {
-	defer hm.wg.Done()
+func (hm *HealthMonitor) monitorLoop(quit <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 
 	ticker := time.NewTicker(hm.interval)
 	defer ticker.Stop()

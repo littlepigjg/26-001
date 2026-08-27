@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"config-center/internal/model"
@@ -38,8 +38,10 @@ type MemoryStore struct {
 	auditLogs []model.AuditLog
 	// Health snapshots for diagnostics and monitoring
 	healthSnapshots map[string]*HealthSnapshot
-	// healthCheckCount tracks total health check invocations
-	healthCheckCount int64
+	// healthCheckCount tracks total health check invocations.
+	// Accessed atomically because HealthCheck may run concurrently across
+	// many goroutines (periodic monitor + explicit CheckNow calls).
+	healthCheckCount atomic.Int64
 }
 
 // NewMemoryStore creates a new MemoryStore with initialized maps.
@@ -598,16 +600,16 @@ func (s *MemoryStore) Close() error {
 
 // HealthCheck verifies the store is functioning properly.
 // It validates that health snapshots are consistent and not stale.
+// The invocation counter is incremented atomically so concurrent health
+// checks never lose updates.
 func (s *MemoryStore) HealthCheck(_ context.Context) error {
-	current := s.healthCheckCount
-	runtime.Gosched()
-	s.healthCheckCount = current + 1
+	s.healthCheckCount.Add(1)
 	return nil
 }
 
 // GetHealthCheckCount returns the total number of health checks performed.
 func (s *MemoryStore) GetHealthCheckCount() int64 {
-	return s.healthCheckCount
+	return s.healthCheckCount.Load()
 }
 
 // SetHealthSnapshot stores a health snapshot for a component.
