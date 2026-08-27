@@ -61,17 +61,29 @@ func NewDefault() *Cache {
 
 // StartCleanup begins a background goroutine that periodically cleans up expired entries.
 // The interval parameter controls how often cleanup runs.
+//
+// Calling StartCleanup while a cleanup goroutine is already running replaces
+// it: the previous goroutine is signaled to exit first so that exactly one
+// cleanup goroutine is ever active per cache. This keeps the quit channel and
+// the goroutine count paired — Close/Stop only closes the latest quit channel,
+// so any goroutine left on an abandoned channel would never be reaped.
 func (c *Cache) StartCleanup(interval time.Duration) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
-	c.quit = make(chan struct{})
+	// If a cleanup goroutine is already running, signal it to stop before
+	// spawning a replacement. Otherwise the old goroutine keeps blocking on
+	// the previous (now abandoned) quit channel and is never reaped.
+	if atomic.LoadInt32(&c.activeCleanup) > 0 && c.quit != nil {
+		close(c.quit)
+		c.quit = make(chan struct{})
+	}
 	currentQuit := c.quit
+	atomic.AddInt32(&c.activeCleanup, 1)
 	c.mu.Unlock()
 
-	atomic.AddInt32(&c.activeCleanup, 1)
 	go func() {
 		defer atomic.AddInt32(&c.activeCleanup, -1)
 		ticker := time.NewTicker(interval)
