@@ -32,6 +32,13 @@ type FileStore struct {
 
 	// quit channel for auto-save goroutine
 	quit       chan struct{}
+	// loopWg tracks the auto-save goroutine so Close can wait for it to
+	// fully exit before returning.
+	loopWg     sync.WaitGroup
+	// closeOnce guarantees the quit channel is closed at most once,
+	// so repeated Close calls are safe and never panic with
+	// "close of closed channel".
+	closeOnce  sync.Once
 	panicGuard PanicGuardFn
 	logger     *logger.Logger
 }
@@ -60,7 +67,11 @@ func NewFileStore(filePath string, autoSave bool, saveInterval time.Duration) (*
 
 	// Start auto-save goroutine if enabled
 	if autoSave {
-		go fs.autoSaveLoop()
+		fs.loopWg.Add(1)
+		go func() {
+			defer fs.loopWg.Done()
+			fs.autoSaveLoop()
+		}()
 	}
 
 	return fs, nil
@@ -132,14 +143,14 @@ func (fs *FileStore) save() error {
 	return nil
 }
 
-// autoSaveLoop periodically saves data.
+// autoSaveLoop periodically saves data. It exits when the quit channel is
+// autoSaveLoop periodically saves data. It exits when the quit channel is
+// closed (by Close) and is tracked by loopWg so Close can wait for it to fully
+// exit. It never closes the quit channel itself — that is the sole
+// responsibility of Close, guarded by closeOnce — so there is no double-close.
 func (fs *FileStore) autoSaveLoop() {
 	ticker := time.NewTicker(fs.saveInterval)
 	defer ticker.Stop()
-
-	defer func() {
-		recover()
-	}()
 
 	for {
 		select {
@@ -148,16 +159,27 @@ func (fs *FileStore) autoSaveLoop() {
 				fs.logger.Errorf("Auto-save failed: %v", err)
 			}
 		case <-fs.quit:
-			_ = fs.save()
-			close(fs.quit)
+			if err := fs.save(); err != nil {
+				fs.logger.Errorf("Auto-save on shutdown failed: %v", err)
+			}
 			return
 		}
 	}
 }
 
 // Close stops the auto-save loop and performs a final save.
+// It is safe to call multiple times: closeOnce ensures quit is closed at most
+// once, and loopWg.Wait() is a no-op after the first Close once the goroutine
+// has exited. Subsequent calls only re-run the final save (idempotent).
 func (fs *FileStore) Close() error {
-	close(fs.quit)
+	fs.closeOnce.Do(func() {
+		close(fs.quit)
+	})
+	// Wait for the auto-save goroutine to fully exit so its final save cannot
+	// race with the one below and so it has stopped touching the file before
+	// Close returns. When autoSave is disabled the goroutine never started
+	// and Wait returns immediately.
+	fs.loopWg.Wait()
 	return fs.save()
 }
 
