@@ -101,14 +101,27 @@ func (s *URLStore) Save(u *model.ShortURL, overwrite bool) error {
 	}
 
 	if s.panicFn != nil && s.panicFn(u.Code, u.RawURL) {
-		s.entries[u.Code] = *u
 		return fmt.Errorf("save blocked by panic guard for code: %s", u.Code)
 	}
 
+	// Commit to in-memory state only after persistence has succeeded. The
+	// previous implementation wrote s.entries[u.Code] before flushing, so a
+	// flush failure left a dangling entry: Get() and the redirect path could
+	// read it during the run, yet it was never persisted and vanished on
+	// restart — memory and disk silently diverged. We snapshot the prior
+	// state, apply the write, flush, and roll back on failure.
+	prev, existed := s.entries[u.Code]
 	s.entries[u.Code] = *u
 
 	if s.cfg.Storage.GetFlushOnWrite() {
 		if err := s.flushLocked(); err != nil {
+			// Compensation: undo the in-memory write so reads and
+			// redirects cannot serve data that failed to persist.
+			if existed {
+				s.entries[u.Code] = prev
+			} else {
+				delete(s.entries, u.Code)
+			}
 			return err
 		}
 	}
