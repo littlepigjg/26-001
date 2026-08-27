@@ -95,19 +95,19 @@ func (s *URLStore) Save(u *model.ShortURL, overwrite bool) (retErr error) {
 	}()
 
 	if s.closed {
-		return fmt.Errorf("url store save: %s", (&model.ErrURLStoreUnavailable{Reason: "store is closed"}).Error())
+		return fmt.Errorf("url store save: %w", &model.ErrURLStoreUnavailable{Reason: "store is closed"})
 	}
 
 	if u == nil {
-		return fmt.Errorf("url store save: %s", model.ErrInvalidParam("short_url", "cannot be nil").Error())
+		return fmt.Errorf("url store save: %w", model.ErrInvalidParam("short_url", "cannot be nil"))
 	}
 
 	if u.Code == "" {
-		return fmt.Errorf("url store save: %s", model.ErrInvalidParam("code", "cannot be empty").Error())
+		return fmt.Errorf("url store save: %w", model.ErrInvalidParam("code", "cannot be empty"))
 	}
 
 	if u.RawURL == "" {
-		return fmt.Errorf("url store save: %s", model.ErrInvalidParam("raw_url", "cannot be empty").Error())
+		return fmt.Errorf("url store save: %w", model.ErrInvalidParam("raw_url", "cannot be empty"))
 	}
 
 	// Check fault injection
@@ -119,7 +119,7 @@ func (s *URLStore) Save(u *model.ShortURL, overwrite bool) (retErr error) {
 	existing, exists := s.shortURLs[u.Code]
 	if exists && !overwrite {
 		err := &model.ErrURLCodeAlreadyExists{Code: u.Code}
-		return fmt.Errorf("url store save: %s", err.Error())
+		return fmt.Errorf("url store save: %w", err)
 	}
 
 	if exists && overwrite {
@@ -141,27 +141,27 @@ func (s *URLStore) Get(code string) (*model.ShortURL, error) {
 	defer s.mu.RUnlock()
 
 	if s.closed {
-		return nil, fmt.Errorf("url store get: %s", (&model.ErrURLStoreUnavailable{Reason: "store is closed"}).Error())
+		return nil, fmt.Errorf("url store get: %w", &model.ErrURLStoreUnavailable{Reason: "store is closed"})
 	}
 
 	if code == "" {
-		return nil, fmt.Errorf("url store get: %s", model.ErrInvalidParam("code", "cannot be empty").Error())
+		return nil, fmt.Errorf("url store get: %w", model.ErrInvalidParam("code", "cannot be empty"))
 	}
 
 	u, exists := s.shortURLs[code]
 	if !exists {
 		err := &model.ErrURLCodeNotFound{Code: code}
-		return nil, fmt.Errorf("url store get: %s", err.Error())
+		return nil, fmt.Errorf("url store get: %w", err)
 	}
 
 	if u.Disabled {
 		err := &model.ErrRedirectDisabled{Code: code}
-		return nil, fmt.Errorf("url store get: %s", err.Error())
+		return nil, fmt.Errorf("url store get: %w", err)
 	}
 
 	if u.IsExpired(time.Now()) {
 		err := &model.ErrRedirectExpired{Code: code}
-		return nil, fmt.Errorf("url store get: %s", err.Error())
+		return nil, fmt.Errorf("url store get: %w", err)
 	}
 
 	return u, nil
@@ -173,13 +173,13 @@ func (s *URLStore) IncrementVisits(code string) error {
 	defer s.mu.Unlock()
 
 	if s.closed {
-		return fmt.Errorf("url store increment: %s", (&model.ErrURLStoreUnavailable{Reason: "store is closed"}).Error())
+		return fmt.Errorf("url store increment: %w", &model.ErrURLStoreUnavailable{Reason: "store is closed"})
 	}
 
 	u, exists := s.shortURLs[code]
 	if !exists {
 		err := &model.ErrURLCodeNotFound{Code: code}
-		return fmt.Errorf("url store increment: %s", err.Error())
+		return fmt.Errorf("url store increment: %w", err)
 	}
 
 	u.Visits++
