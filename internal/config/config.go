@@ -30,8 +30,8 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration `json:"shutdown_timeout"`
 }
 
-// StorageConfig holds storage-related configuration.
-type StorageConfig struct {
+// Storage holds storage-related configuration.
+type Storage struct {
 	// Type is the storage backend type ("memory" or "file").
 	Type string `json:"type"`
 	// FilePath is the path to the storage file (for file storage).
@@ -40,6 +40,43 @@ type StorageConfig struct {
 	AutoSave bool `json:"auto_save"`
 	// AutoSaveInterval is how often to save (for file storage).
 	AutoSaveInterval time.Duration `json:"auto_save_interval"`
+
+	urlFilePath    string
+	logFilePath    string
+	syncInterval   time.Duration
+	flushOnWrite   bool
+}
+
+func (s *Storage) URLFilePath(path string) {
+	s.urlFilePath = path
+}
+
+func (s *Storage) LogFilePath(path string) {
+	s.logFilePath = path
+}
+
+func (s *Storage) SyncInterval(d time.Duration) {
+	s.syncInterval = d
+}
+
+func (s *Storage) FlushOnWrite(b bool) {
+	s.flushOnWrite = b
+}
+
+func (s *Storage) GetURLFilePath() string {
+	return s.urlFilePath
+}
+
+func (s *Storage) GetLogFilePath() string {
+	return s.logFilePath
+}
+
+func (s *Storage) GetSyncInterval() time.Duration {
+	return s.syncInterval
+}
+
+func (s *Storage) GetFlushOnWrite() bool {
+	return s.flushOnWrite
 }
 
 // LoggingConfig holds logging-related configuration.
@@ -69,11 +106,16 @@ type Config struct {
 	// Server holds server-specific settings.
 	Server ServerConfig `json:"server"`
 	// Storage holds storage backend settings.
-	Storage StorageConfig `json:"storage"`
+	Storage Storage `json:"storage"`
 	// Logging holds logging settings.
 	Logging LoggingConfig `json:"logging"`
 	// Cache holds cache settings.
 	Cache CacheConfig `json:"cache"`
+}
+
+// Default returns the default configuration.
+func Default() *Config {
+	return defaultConfig()
 }
 
 // defaultConfig returns the default configuration.
@@ -87,11 +129,13 @@ func defaultConfig() *Config {
 			IdleTimeout:     120 * time.Second,
 			ShutdownTimeout: 10 * time.Second,
 		},
-		Storage: StorageConfig{
+		Storage: Storage{
 			Type:             "memory",
 			FilePath:         "",
 			AutoSave:         false,
 			AutoSaveInterval: 30 * time.Second,
+			syncInterval:     5 * time.Second,
+			flushOnWrite:     true,
 		},
 		Logging: LoggingConfig{
 			Level:      "INFO",

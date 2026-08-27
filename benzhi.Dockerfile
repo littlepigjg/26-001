@@ -5,17 +5,17 @@ WORKDIR /app
 # Copy go module files first for better caching
 COPY go.mod ./
 
-# Copy all source code
-COPY . .
-
 # Download dependencies (only standard library used, so this is a no-op)
 RUN go mod download
 
-# Build the project
-RUN go build ./...
+# Copy all source code
+COPY . .
+
+# Build the server binary
+RUN go build -o config-center-server ./cmd/server/
 
 # Expose the default port
 EXPOSE 8080
 
 # Start the server
-CMD ["go", "run", "./cmd/server"]
+CMD ["./config-center-server"]
