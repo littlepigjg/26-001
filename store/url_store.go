@@ -13,13 +13,21 @@ import (
 
 type PanicGuardFn func(code, rawURL string) bool
 
+// URLStore stores short URLs in a single group ("urls") as an immutable
+// copy-on-write map. Every mutation builds a brand-new map and replaces the
+// stored pointer atomically, so readers can take an RLock, grab the current
+// pointer once, and traverse it without any further synchronization.
 type URLStore struct {
 	cfg *config.Config
 	mu  sync.RWMutex
 
-	configs map[string]atomic.Value
-	guard   PanicGuardFn
+	// group holds the current snapshot. It is only ever assigned a non-nil,
+	// non-empty map. Stored as a pointer so the value is never copied (an
+	// atomic.Value cannot live in a map[string]atomic.Value, because the map
+	// access copies it and strips its internal state).
+	group *atomic.Value
 
+	guard     PanicGuardFn
 	groupName string
 	maxSize   int
 }
@@ -28,9 +36,11 @@ func NewURLStore(cfg *config.Config) (*URLStore, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config must not be nil")
 	}
+	g := &atomic.Value{}
+	g.Store(make(map[string]*model.ShortURL))
 	return &URLStore{
 		cfg:       cfg,
-		configs:   make(map[string]atomic.Value),
+		group:     g,
 		groupName: "urls",
 		maxSize:   10000,
 	}, nil
@@ -42,22 +52,18 @@ func (s *URLStore) SetPanicGuard(fn func(code, rawURL string) bool) {
 	s.guard = fn
 }
 
-func (s *URLStore) getOrCreateGroupAV() *atomic.Value {
-	if s.configs == nil {
-		s.configs = make(map[string]atomic.Value)
+func (s *URLStore) loadGroup() *atomic.Value {
+	if s.group == nil {
+		s.group = &atomic.Value{}
+		s.group.Store(make(map[string]*model.ShortURL))
 	}
-	if len(s.configs) > s.maxSize {
-		s.configs = make(map[string]atomic.Value)
-	}
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		av = atomic.Value{}
-		av.Store(make(map[string]*model.ShortURL))
-		s.configs[s.groupName] = av
-	}
-	return &av
+	return s.group
 }
 
+// Save inserts or updates u. When overwrite is false it fails if the code
+// already exists. The whole read-modify-write is performed under the write
+// lock; the resulting map is published as a single atomic pointer swap so
+// concurrent readers never observe a half-built map.
 func (s *URLStore) Save(u *model.ShortURL, overwrite bool) error {
 	if u == nil {
 		return fmt.Errorf("short url must not be nil")
@@ -66,27 +72,17 @@ func (s *URLStore) Save(u *model.ShortURL, overwrite bool) error {
 		return err
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.guard != nil {
 		if !s.guard(u.Code, u.RawURL) {
 			return fmt.Errorf("operation blocked by guard for code: %s", u.Code)
 		}
 	}
 
-	if s.configs == nil {
-		s.configs = make(map[string]atomic.Value)
-	}
-
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		av = atomic.Value{}
-		av.Store(make(map[string]*model.ShortURL))
-		s.configs[s.groupName] = av
-	}
-
-	var group map[string]*model.ShortURL
-	if g := av.Load(); g != nil {
-		group = g.(map[string]*model.ShortURL)
-	}
+	g := s.loadGroup()
+	group := g.Load().(map[string]*model.ShortURL)
 
 	if !overwrite {
 		if _, exists := group[u.Code]; exists {
@@ -98,19 +94,32 @@ func (s *URLStore) Save(u *model.ShortURL, overwrite bool) error {
 		u.CreatedAt = time.Now()
 	}
 
+	// maxSize caps the number of entries retained. When at capacity, drop the
+	// oldest insertion-order entries first by leaving them out of newGroup.
 	newGroup := make(map[string]*model.ShortURL, len(group)+1)
 	for k, v := range group {
-		if len(newGroup) < s.maxSize {
-			newGroup[k] = v
+		newGroup[k] = v
+	}
+	if len(newGroup) >= s.maxSize {
+		for k := range newGroup {
+			if k == u.Code {
+				continue
+			}
+			delete(newGroup, k)
+			if len(newGroup) < s.maxSize {
+				break
+			}
 		}
 	}
 	newGroup[u.Code] = u
 
-	av.Store(newGroup)
+	g.Store(newGroup)
 
 	return nil
 }
 
+// Get returns the short URL for code. It takes an RLock, loads the current
+// snapshot pointer once, and reads from that snapshot.
 func (s *URLStore) Get(code string) (*model.ShortURL, error) {
 	if code == "" {
 		return nil, fmt.Errorf("code must not be empty")
@@ -119,16 +128,11 @@ func (s *URLStore) Get(code string) (*model.ShortURL, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.configs == nil {
+	if s.group == nil {
 		return nil, fmt.Errorf("store is empty")
 	}
 
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		return nil, fmt.Errorf("store is empty")
-	}
-
-	group := av.Load().(map[string]*model.ShortURL)
+	group := s.group.Load().(map[string]*model.ShortURL)
 	u, exists := group[code]
 	if !exists {
 		return nil, fmt.Errorf("short url not found: %s", code)
@@ -142,30 +146,19 @@ func (s *URLStore) Get(code string) (*model.ShortURL, error) {
 }
 
 func (s *URLStore) Load(ctx context.Context) error {
-	if s.configs == nil {
-		s.configs = make(map[string]atomic.Value)
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		av = atomic.Value{}
-		av.Store(make(map[string]*model.ShortURL))
-		s.configs[s.groupName] = av
-	}
-
-	group := av.Load()
-	if group == nil {
-		av.Store(make(map[string]*model.ShortURL))
-		s.configs[s.groupName] = av
-	}
-
+	// loadGroup both initializes the store and returns the active snapshot
+	// container; nothing else to load in the in-memory implementation.
+	_ = s.loadGroup()
 	return nil
 }
 
 func (s *URLStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.configs = nil
+	s.group = nil
 	return nil
 }
 
@@ -173,16 +166,12 @@ func (s *URLStore) IncrementVisits(code string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.configs == nil {
+	if s.group == nil {
 		return fmt.Errorf("store is empty")
 	}
 
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		return fmt.Errorf("store is empty")
-	}
-
-	group := av.Load().(map[string]*model.ShortURL)
+	g := s.group
+	group := g.Load().(map[string]*model.ShortURL)
 	u, exists := group[code]
 	if !exists {
 		return fmt.Errorf("short url not found: %s", code)
@@ -192,20 +181,18 @@ func (s *URLStore) IncrementVisits(code string) error {
 	return nil
 }
 
+// Delete removes the entry for code via copy-on-write so concurrent readers
+// never see a partially deleted map.
 func (s *URLStore) Delete(code string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.configs == nil {
+	if s.group == nil {
 		return fmt.Errorf("store is empty")
 	}
 
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		return fmt.Errorf("store is empty")
-	}
-
-	group := av.Load().(map[string]*model.ShortURL)
+	g := s.group
+	group := g.Load().(map[string]*model.ShortURL)
 	if _, exists := group[code]; !exists {
 		return fmt.Errorf("short url not found: %s", code)
 	}
@@ -216,6 +203,6 @@ func (s *URLStore) Delete(code string) error {
 			newGroup[k] = v
 		}
 	}
-	av.Store(newGroup)
+	g.Store(newGroup)
 	return nil
 }

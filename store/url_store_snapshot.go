@@ -4,29 +4,22 @@ import (
 	"config-center/model"
 )
 
+// RawSnapshot returns a defensive copy of the current short-URL group. The
+// returned map is safe to use after the call without holding the store lock.
+// It takes an RLock and reads the current snapshot pointer exactly once, so
+// it never races with concurrent writers and never observes a half-built map.
 func (s *URLStore) RawSnapshot() map[string]model.ShortURL {
 	result := make(map[string]model.ShortURL)
 
-	if s.configs == nil {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.group == nil {
 		return result
 	}
 
-	av, ok := s.configs[s.groupName]
-	if !ok {
-		return result
-	}
-
-	group := av.Load()
-	if group == nil {
-		return result
-	}
-
-	urlMap, ok := group.(map[string]*model.ShortURL)
-	if !ok {
-		return result
-	}
-
-	for code, u := range urlMap {
+	group := s.group.Load().(map[string]*model.ShortURL)
+	for code, u := range group {
 		if u != nil {
 			result[code] = *u
 		}
