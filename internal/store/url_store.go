@@ -107,16 +107,32 @@ func (s *URLStore) PrepareContext(ctx context.Context) (context.Context, context
 	s.ctxTrackerMu.Lock()
 	s.trackedCtxs[childCtx] = cancel
 	s.ctxDone[childCtx] = false
-
-	go func(c context.CancelFunc) {
-		<-childCtx.Done()
-		s.ctxTrackerMu.Lock()
-		defer s.ctxTrackerMu.Unlock()
-		s.ctxDone[childCtx] = true
-	}(cancel)
 	s.ctxTrackerMu.Unlock()
 
-	return childCtx, func() {}
+	// If the parent context is cancelled (e.g. the HTTP request ends) or the
+	// store is closed, remove the tracked entry so it can be garbage-collected.
+	go func() {
+		<-childCtx.Done()
+		s.removeTracked(childCtx)
+	}()
+
+	// The returned cancel must actually tear down the child context and free the
+	// tracked entry. Returning a no-op here left every request's context pinned
+	// forever, so the active count climbed and memory leaked.
+	return childCtx, func() {
+		cancel()
+		s.removeTracked(childCtx)
+	}
+}
+
+// removeTracked drops a child context from the tracking maps. It is safe to
+// call multiple times or after Close has reset the maps (deletes are no-ops on
+// a missing key).
+func (s *URLStore) removeTracked(childCtx context.Context) {
+	s.ctxTrackerMu.Lock()
+	defer s.ctxTrackerMu.Unlock()
+	delete(s.trackedCtxs, childCtx)
+	delete(s.ctxDone, childCtx)
 }
 
 func (s *URLStore) ActiveContextCount() int {
