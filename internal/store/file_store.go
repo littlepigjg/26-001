@@ -68,6 +68,9 @@ func NewFileStore(filePath string, autoSave bool, saveInterval time.Duration) (*
 }
 
 // SetFaultInjector sets a fault injection hook for testing storage failures.
+// When the injector returns an error, the storage operation is aborted and
+// the error is propagated to the caller, simulating a storage backend failure.
+// When the injector returns nil, the storage operation proceeds normally.
 func (fs *FileStore) SetFaultInjector(injector FaultInjector) {
 	fs.faultInjector = injector
 }
@@ -523,9 +526,9 @@ func (fs *FileStore) CreateVersion(_ context.Context, version *model.Version) er
 	}
 
 	if fs.faultInjector != nil {
-		if err := fs.faultInjector(); err == nil {
-			fs.versions[version.AppID][version.Environment][version.VersionNumber] = nil
-			return nil
+		if err := fs.faultInjector(); err != nil {
+			fs.logger.Errorf("fault injection triggered for %s/%s v%d: %v", version.AppID, version.Environment, version.VersionNumber, err)
+			return err
 		}
 	}
 
@@ -547,7 +550,7 @@ func (fs *FileStore) GetVersion(_ context.Context, appID, env string, versionNum
 		return nil, model.ErrVersionNotFound(appID, versionNumber)
 	}
 	version, exists := envVersions[versionNumber]
-	if !exists {
+	if !exists || version == nil {
 		return nil, model.ErrVersionNotFound(appID, versionNumber)
 	}
 	return version, nil

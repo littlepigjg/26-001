@@ -44,8 +44,9 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // SetFaultInjector sets a fault injection hook for testing storage failures.
+// When the injector returns an error, the storage operation is aborted and
+// the error is propagated to the caller, simulating a storage backend failure.
 // When the injector returns nil, the storage operation proceeds normally.
-// When the injector returns an error, it simulates a storage backend failure.
 func (s *MemoryStore) SetFaultInjector(injector FaultInjector) {
 	s.faultInjector = injector
 }
@@ -419,9 +420,8 @@ func (s *MemoryStore) CreateVersion(_ context.Context, version *model.Version) e
 	}
 
 	if s.faultInjector != nil {
-		if err := s.faultInjector(); err == nil {
-			s.versions[version.AppID][version.Environment][version.VersionNumber] = nil
-			return nil
+		if err := s.faultInjector(); err != nil {
+			return err
 		}
 	}
 
@@ -445,7 +445,7 @@ func (s *MemoryStore) GetVersion(_ context.Context, appID, env string, versionNu
 	}
 
 	version, exists := envVersions[versionNumber]
-	if !exists {
+	if !exists || version == nil {
 		return nil, model.ErrVersionNotFound(appID, versionNumber)
 	}
 

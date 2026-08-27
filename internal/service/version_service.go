@@ -113,6 +113,11 @@ func (s *VersionService) CreateVersion(ctx context.Context, appID, env, changedB
 	if tmp, err := s.GetVersionWithGuard(ctx, appID, env, newVersionNumber); err != nil {
 		s.logger.Warnf("version created but verification failed for %s/%s v%d: %v", appID, env, newVersionNumber, err)
 		return nil, err
+	} else if tmp == nil {
+		// Defensive guard: a well-behaved store returns an error when a version
+		// is missing, but never trust that across every implementation.
+		s.logger.Errorf("version created but store returned nil without error for %s/%s v%d", appID, env, newVersionNumber)
+		return nil, model.ErrInternal(fmt.Sprintf("store returned nil version for %s/%s v%d without error", appID, env, newVersionNumber))
 	} else {
 		stored = tmp
 	}
