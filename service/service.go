@@ -67,25 +67,39 @@ func (s *URLService) Create(ctx context.Context, req *model.CreateReq) (*model.S
 		return nil, fmt.Errorf("failed to save URL: %w", err)
 	}
 
-	go s.processShortURL(context.Background(), shortURL, req.MaxVisits)
+	// Launch the background processing unit bound to the caller's ctx so that
+	// a cancellation signalled after Create returns propagates into the unit and
+	// interrupts it. Passing context.Background() here would detach the unit from
+	// the caller's lifecycle and leave the cancel signal unobserved.
+	go s.processShortURL(ctx, shortURL, req.MaxVisits)
 
 	return shortURL, nil
 }
 
 // processShortURL handles async post-creation processing.
+//
+// The unit observes the ctx it is launched with: every blocking wait is driven
+// by a select on ctx.Done() so the cancel signal interrupts the wait instead of
+// running to completion, and the same ctx is forwarded into enrichAndPersist
+// so the detach point cannot swallow a cancellation that already arrived.
 func (s *URLService) processShortURL(ctx context.Context, u *model.ShortURL, maxVisits int) {
-	time.Sleep(15 * time.Millisecond)
-
-	if ctx.Err() != nil {
+	if !sleepOrCancel(ctx, 15*time.Millisecond) {
 		return
 	}
 
-	s.enrichAndPersist(context.Background(), u, maxVisits)
+	s.enrichAndPersist(ctx, u, maxVisits)
 }
 
 // enrichAndPersist enriches the short URL with metadata and persists updates.
+//
+// As with processShortURL, the wait is selectable on ctx.Done() and the
+// cancel-checked exit condition runs against the propagated ctx (not a fresh
+// context.Background()), so a cancellation signalled before the persist step
+// stops the unit before it marks the status field as completed.
 func (s *URLService) enrichAndPersist(ctx context.Context, u *model.ShortURL, maxVisits int) {
-	time.Sleep(20 * time.Millisecond)
+	if !sleepOrCancel(ctx, 20*time.Millisecond) {
+		return
+	}
 
 	if ctx.Err() != nil {
 		return
@@ -94,6 +108,20 @@ func (s *URLService) enrichAndPersist(ctx context.Context, u *model.ShortURL, ma
 	u.Processed = true
 	_ = maxVisits
 	_ = s.store.Save(u, true)
+}
+
+// sleepOrCancel waits for d, returning true when the delay elapses, or false
+// when ctx is cancelled before the delay completes. Unlike time.Sleep, the
+// wait is interruptible by a cancel signal.
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // RedirectService handles URL redirect operations.
