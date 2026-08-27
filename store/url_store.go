@@ -113,7 +113,14 @@ func (s *URLStore) Get(code string) (*model.ShortURL, error) {
 
 // RawSnapshot returns a snapshot of all short URLs currently stored.
 // The returned map is a copy of the internal state at the time of the call.
+// It holds the read lock for the duration of the copy so that concurrent
+// writers (Save/Delete/IncrementVisits) cannot mutate the map mid-iteration,
+// which would otherwise trigger an unrecoverable
+// "concurrent map iteration and map write" fatal error.
 func (s *URLStore) RawSnapshot() map[string]model.ShortURL {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	result := make(map[string]model.ShortURL, len(s.shortURLs))
 
 	for code, short := range s.shortURLs {
