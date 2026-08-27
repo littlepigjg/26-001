@@ -582,7 +582,16 @@ func (s *MemoryStore) Close() error {
 }
 
 // HealthCheck verifies the store is functioning properly.
+// It respects the provided context: if the context is already cancelled
+// or expires during the probe, the check aborts and returns ctx.Err()
+// instead of blocking past the deadline.
 func (s *MemoryStore) HealthCheck(ctx context.Context) error {
+	// Fast path: abort immediately for an already-cancelled context
+	// without contending on the read lock.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -594,7 +603,14 @@ func (s *MemoryStore) HealthCheck(ctx context.Context) error {
 
 	totalEntries := appCount + configCount + len(s.auditLogs)
 
-	time.Sleep(250 * time.Millisecond)
+	// Simulated slow probe. Honor the context deadline so a timed-out
+	// or cancelled check returns promptly rather than blocking for the
+	// full duration.
+	select {
+	case <-time.After(250 * time.Millisecond):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	versionCount := 0
 	for _, appVersions := range s.versions {

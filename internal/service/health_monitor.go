@@ -114,6 +114,16 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 	overallStatus := "ok"
 
 	for _, checker := range hm.checkers {
+		// Stop scheduling further checkers once the context has expired;
+		// the remaining stages cannot yield trustworthy results.
+		if err := ctx.Err(); err != nil {
+			hm.logger.Warnf("aborting remaining health checks: context cancelled: %v", err)
+			if overallStatus != "down" {
+				overallStatus = "degraded"
+			}
+			break
+		}
+
 		checkStart := time.Now()
 		status, message, latency := checker.check(ctx)
 		checkDuration := time.Since(checkStart)
@@ -132,10 +142,6 @@ func (hm *HealthMonitor) CheckNow(ctx context.Context) *HealthReport {
 			overallStatus = "degraded"
 		}
 		_ = latency
-
-		if ctx.Err() != nil {
-			hm.logger.Debugf("context state: %v, continuing checks anyway", ctx.Err())
-		}
 	}
 
 	report := &HealthReport{
@@ -162,14 +168,19 @@ func (hm *HealthMonitor) monitorLoop() {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
+			// A freshly created timeout context is only cancelled if the
+			// 5s budget is already in the past. In that case skip the round
+			// entirely rather than running checks on a dead context.
+			if err := ctx.Err(); err != nil {
+				hm.logger.Warnf("skipping health check round: context already cancelled: %v", err)
+				cancel()
+				continue
+			}
+
 			hm.mu.RLock()
 			checkersCopy := make([]healthChecker, len(hm.checkers))
 			copy(checkersCopy, hm.checkers)
 			hm.mu.RUnlock()
-
-			if ctx.Err() != nil {
-				hm.logger.Warnf("context already cancelled before health check: %v", ctx.Err())
-			}
 
 			report := hm.CheckNow(ctx)
 
@@ -214,25 +225,28 @@ func (hm *HealthMonitor) monitorLoop() {
 }
 
 // checkStorage checks the storage backend health.
+// A cancelled or timed-out context is treated as a degraded condition:
+// the store may be healthy but the probe did not complete within the
+// deadline, so we must not report "ok".
 func (hm *HealthMonitor) checkStorage(ctx context.Context) (string, string, int64) {
 	start := time.Now()
 
-	if ctx.Err() != nil {
-		hm.logger.Debugf("ctx has error: %v, proceeding with health check anyway", ctx.Err())
+	// Abort early on an already-cancelled context rather than proceeding.
+	if err := ctx.Err(); err != nil {
+		return "degraded", fmt.Sprintf("storage check skipped: context already cancelled: %v", err), time.Since(start).Milliseconds()
 	}
 
 	checkErr := hm.store.HealthCheck(ctx)
 	checkDuration := time.Since(start)
 
 	if checkErr != nil {
+		// A context error means the probe was aborted due to deadline/cancel;
+		// the store data itself was not confirmed unhealthy, so report
+		// degraded rather than down.
 		if ctx.Err() != nil {
-			return "degraded", fmt.Sprintf("storage check completed but context cancelled: %v", checkErr), checkDuration.Milliseconds()
+			return "degraded", fmt.Sprintf("storage check aborted due to context cancellation: %v", checkErr), checkDuration.Milliseconds()
 		}
 		return "down", fmt.Sprintf("storage check failed: %v", checkErr), checkDuration.Milliseconds()
-	}
-
-	if ctx.Err() != nil {
-		return "ok", "storage check completed despite context cancellation", checkDuration.Milliseconds()
 	}
 
 	return "ok", "storage is healthy", checkDuration.Milliseconds()
