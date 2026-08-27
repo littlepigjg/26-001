@@ -116,7 +116,10 @@ func (s *ConfigService) UpdateConfig(ctx context.Context, appID, env, key, value
 	}
 
 	if s.auditSvc != nil && value != "" {
-		s.auditSvc.LogConfigChange(ctx, appID, env, key, updatedBy, "", oldValue, value)
+		if err := s.auditSvc.LogConfigChange(ctx, appID, env, key, updatedBy, "", oldValue, value); err != nil {
+			s.logger.Errorf("failed to log config change %s/%s/%s: %v", appID, env, key, err)
+			return nil, fmt.Errorf("audit log write failed: %w", err)
+		}
 	}
 
 	s.logger.Infof("updated config: %s/%s/%s (v%d)", appID, env, key, existing.Version)

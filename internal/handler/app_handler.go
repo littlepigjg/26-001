@@ -68,8 +68,11 @@ func (h *Handlers) createApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the creation
-	_ = h.AuditService.LogSuccess(r.Context(), "CREATE", "app", app.ID, app.ID, "", user, getClientIP(r),
-		"created application: "+app.Name)
+	if err := h.AuditService.LogSuccess(r.Context(), "CREATE", "app", app.ID, app.ID, "", user, getClientIP(r),
+		"created application: "+app.Name); err != nil {
+		handleError(w, err)
+		return
+	}
 
 	response.SuccessCreated(w, app)
 }
@@ -114,8 +117,11 @@ func (h *Handlers) updateApp(w http.ResponseWriter, r *http.Request, appID strin
 		return
 	}
 
-	_ = h.AuditService.LogSuccess(r.Context(), "UPDATE", "app", app.ID, app.ID, "", user, getClientIP(r),
-		"updated application: "+app.Name)
+	if err := h.AuditService.LogSuccess(r.Context(), "UPDATE", "app", app.ID, app.ID, "", user, getClientIP(r),
+		"updated application: "+app.Name); err != nil {
+		handleError(w, err)
+		return
+	}
 
 	response.Success(w, app)
 }
@@ -128,8 +134,11 @@ func (h *Handlers) deleteApp(w http.ResponseWriter, r *http.Request, appID strin
 		return
 	}
 
-	_ = h.AuditService.LogSuccess(r.Context(), "DELETE", "app", appID, appID, "", user, getClientIP(r),
-		"deleted application: "+appID)
+	if err := h.AuditService.LogSuccess(r.Context(), "DELETE", "app", appID, appID, "", user, getClientIP(r),
+		"deleted application: "+appID); err != nil {
+		handleError(w, err)
+		return
+	}
 
 	response.SuccessNoContent(w)
 }

@@ -141,7 +141,10 @@ func (h *Handlers) createConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log and auto-create version
-	_ = h.AuditService.LogConfigCreate(r.Context(), req.AppID, req.Environment, req.Key, user, getClientIP(r))
+	if err := h.AuditService.LogConfigCreate(r.Context(), req.AppID, req.Environment, req.Key, user, getClientIP(r)); err != nil {
+		handleError(w, err)
+		return
+	}
 	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), req.AppID, req.Environment, user)
 
 	response.SuccessCreated(w, config)
@@ -173,8 +176,7 @@ func (h *Handlers) updateConfig(w http.ResponseWriter, r *http.Request, appID, e
 		return
 	}
 
-	// Log change and auto-create version
-	_ = h.AuditService.LogConfigChange(r.Context(), appID, env, key, user, getClientIP(r), "", config.Value)
+	// Auto-create version (audit logging is handled inside ConfigService.UpdateConfig)
 	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), appID, env, user)
 
 	response.Success(w, config)
@@ -188,7 +190,10 @@ func (h *Handlers) deleteConfig(w http.ResponseWriter, r *http.Request, appID, e
 		return
 	}
 
-	_ = h.AuditService.LogConfigDelete(r.Context(), appID, env, key, user, getClientIP(r))
+	if err := h.AuditService.LogConfigDelete(r.Context(), appID, env, key, user, getClientIP(r)); err != nil {
+		handleError(w, err)
+		return
+	}
 	_, _, _ = h.VersionService.AutoSnapshot(r.Context(), appID, env, user)
 
 	response.SuccessNoContent(w)

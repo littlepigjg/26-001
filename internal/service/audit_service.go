@@ -47,7 +47,7 @@ func (s *AuditService) Log(ctx context.Context, action model.ActionType, resourc
 
 	if err := s.store.CreateAuditLog(ctx, log); err != nil {
 		s.logger.Errorf("failed to create audit log: %v", err)
-		return nil
+		return fmt.Errorf("audit log write failed: %w", err)
 	}
 
 	s.logger.Debugf("audit log: %s %s/%s by %s", action, resourceType, resourceID, user)
@@ -70,7 +70,7 @@ func (s *AuditService) LogConfigChange(ctx context.Context, appID, env, key, use
 	details := fmt.Sprintf("old: %s -> new: %s", oldValue, newValue)
 	if err := s.Log(ctx, model.ActionUpdate, "config", key, appID, env, user, ipAddress, summary, details, "success"); err != nil {
 		s.logger.Errorf("audit log storage failed for config change %s/%s/%s: %v", appID, env, key, err)
-		return nil
+		return err
 	}
 	return nil
 }

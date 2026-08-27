@@ -124,7 +124,8 @@ func (s *RollbackService) Rollback(ctx context.Context, appID, env string, targe
 
 	// Log the rollback
 	if err := s.auditSvc.LogRollback(ctx, appID, env, currentVersion, targetVersion, user, ipAddress); err != nil {
-		s.logger.Warnf("failed to log rollback: %v", err)
+		s.logger.Errorf("failed to log rollback %s/%s: %v", appID, env, err)
+		return nil, fmt.Errorf("audit log write failed: %w", err)
 	}
 
 	s.logger.Infof("rolled back %s/%s from v%d to v%d (new version: %d)",
